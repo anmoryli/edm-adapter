@@ -908,6 +908,8 @@ def add_figure(doc, path, caption):
 def formula_display_text(block) -> str:
     text = str(block.get("docx_text") or block.get("text") or "")
     replacements = {
+        "alpha/r": "α/r",
+        "alpha": "α",
         "Delta p": "Δp",
         "Delta": "Δ",
         "*": "·",
@@ -3404,6 +3406,8 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
     total = int(stats.get("sample_count", 6016))
     global_step = int(manifest.get("global_step", 960))
     init_step = int(manifest.get("init_global_step", 120))
+    train_last_n_blocks = int(manifest.get("train_last_n_blocks", 4))
+    trainable_params_m = 2.02 if train_last_n_blocks >= 4 else 1.12
     fig = plt.figure(figsize=(7.4, 3.8))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.35, 1.0], wspace=0.28)
     ax = fig.add_subplot(gs[0, 0])
@@ -3413,7 +3417,7 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
         (f"EDM 片段\n{total}×8s", 0.05, 0.66, palette["light_blue"]),
         ("潜变量缓存\nMusicDCAE", 0.31, 0.66, palette["light_blue"]),
         ("基础模型\n3.9B 参数", 0.57, 0.66, palette["light_gray"]),
-        ("末端4层\nLoRA", 0.18, 0.34, palette["light_blue"]),
+        (f"末端{train_last_n_blocks}层\nLoRA", 0.18, 0.34, palette["light_blue"]),
         ("同种子\n基线对照", 0.48, 0.34, palette["light_orange"]),
         (f"训练步\n{init_step}-{global_step}", 0.72, 0.34, palette["white"]),
     ]:
@@ -3424,7 +3428,7 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
     ax.text(0.06, 0.13, "作用：学习目标 EDM 数据域的节奏、低频、合成器音色和混音偏好；不负责歌声音色替换。",
             fontsize=8.2, color="#374151", fontproperties=cn_font)
     ax2 = fig.add_subplot(gs[0, 1])
-    vals = [2.02, 3900]
+    vals = [trainable_params_m, 3900]
     ax2.barh(["可训练 LoRA", "冻结 ACE-Step"], vals, color=[palette["blue"], "#CBD5E1"], height=0.50)
     ax2.set_xscale("log")
     ax2.set_xlabel("参数量（百万，对数坐标）", fontproperties=cn_font)
@@ -4294,12 +4298,14 @@ def paper_blocks_v3(ctx: PaperContext, figs: dict[str, Path]):
 
 
 def normalize_caption_numbers(blocks):
-    counters = {"表": 1, "算法": 1}
+    counters = {"图": 1, "表": 1, "算法": 1}
     for block in blocks:
-        if block.get("type") != "table":
+        block_type = block.get("type")
+        if block_type not in {"figure", "table"}:
             continue
         caption = str(block.get("caption", "")).strip()
-        for label in ("表", "算法"):
+        labels = ("图",) if block_type == "figure" else ("表", "算法")
+        for label in labels:
             if not caption.startswith(label):
                 continue
             rest = caption[len(label):].strip()
@@ -4311,11 +4317,835 @@ def normalize_caption_numbers(blocks):
     return blocks
 
 
+def paper_blocks_submission(ctx: PaperContext, figs: dict[str, Path]):
+    """Submission-oriented paper body with explicit method, experiment protocol, and analysis."""
+    stats = ctx.dataset_stats
+    manifest = ctx.manifest
+    total = int(stats.get("sample_count", 6016) or 6016)
+    split = stats.get("split", {}) if isinstance(stats.get("split", {}), dict) else {}
+    train = int(split.get("train", 4833) or 4833)
+    val = int(split.get("val", 557) or 557)
+    test = int(split.get("test", 626) or 626)
+    global_step = int(manifest.get("global_step", 1200) or 1200)
+    init_step = int(manifest.get("init_global_step", 960) or 960)
+    local_step = int(manifest.get("local_step", max(global_step - init_step, 0)) or max(global_step - init_step, 0))
+    train_last_n_blocks = int(manifest.get("train_last_n_blocks", 4) or 4)
+    trainable_params = "2.02M" if train_last_n_blocks >= 4 else "1.12M"
+
+    voice = _latest_voice_conversion_record()
+    task = voice.get("task", {}) if isinstance(voice.get("task", {}), dict) else {}
+    outputs = task.get("outputs", {}) if isinstance(task.get("outputs", {}), dict) else {}
+    stems = outputs.get("stems", {}) if isinstance(outputs.get("stems", {}), dict) else {}
+    task_dir = Path(voice.get("task_dir", Path()))
+    mix_path = Path(voice.get("mix", Path()))
+    duration, sr = _audio_info(mix_path) if mix_path.exists() else (0.0, 0)
+    metrics = _parse_voice_metrics(task.get("analysis", ""))
+    rtf = _parse_rtf(task_dir) if task_dir.exists() else None
+    rtf_text = f"{rtf:.2f}" if rtf else "未记录"
+    voice_id = voice.get("id", "未记录")
+
+    task_records = _voice_conversion_task_records()
+    running_record = task_records["running"][-1] if task_records["running"] else {}
+    failed_record = task_records["failed"][-1] if task_records["failed"] else {}
+    long_record = running_record or failed_record or (task_records["completed"][-1] if task_records["completed"] else {})
+    long_params = long_record.get("params", {}) if isinstance(long_record.get("params", {}), dict) else {}
+    long_duration = float(long_record.get("duration", 0.0) or 0.0)
+    long_est_min = float(long_record.get("estimated_min", 0.0) or 0.0)
+    diffusion_steps = int(long_params.get("diffusion_steps", 30) or 30)
+    cfg_rate = float(long_params.get("inference_cfg_rate", 0.75) or 0.75)
+    dehiss_strength = float(long_params.get("dehiss_strength", 0.0) or 0.0)
+    emotion_strength = float(long_params.get("emotion_strength", 0.0) or 0.0)
+
+    section15_report = read_json(ROOT / "outputs" / "datasets" / "avicii_section15_v2" / "reports" / "build_report.json", {})
+    section_counts = section15_report.get("section_counts") or {}
+    split_counts = section15_report.get("split_counts") or {}
+    section15_clips = int(section15_report.get("clips", 360) or 360)
+    section15_sources = int(section15_report.get("sources", 142) or 142)
+    section15_summary = (
+        f"drop={section_counts.get('drop', 130)}, breakdown={section_counts.get('breakdown', 86)}, "
+        f"build-up={section_counts.get('build-up', 65)}, intro={section_counts.get('intro', 36)}, "
+        f"loop={section_counts.get('loop', 25)}, outro={section_counts.get('outro', 18)}"
+    )
+
+    stem_status = "已完成 vocals、drums、bass、other 分离并生成伴奏" if stems.get("vocals") else "未记录完整 stems"
+    metric_rows = [
+        ["任务编号", voice_id, "作为复现实验单元的索引"],
+        ["输出文件", mix_path.name if mix_path.exists() else "未产出", f"{duration:.1f}s / {sr}Hz" if duration else "未记录"],
+        ["分轨状态", stem_status, "验证是否满足“人声转换 + 伴奏重混”的实验前提"],
+        ["客观指标", f"BPM={metrics.get('bpm', 0):.1f}, RMS={metrics.get('rms', 0):.4f}", f"低频比例={metrics.get('low_freq', 0):.4f}, onset={metrics.get('onset', 0):.2f}/s"],
+        ["运行代价", "Seed-VC 离线推理", f"RTF={rtf_text}"],
+    ]
+
+    refs = [
+        "Ho J, Jain A, Abbeel P. Denoising Diffusion Probabilistic Models[C]//Advances in Neural Information Processing Systems. 2020.",
+        "Rombach R, Blattmann A, Lorenz D, Esser P, Ommer B. High-Resolution Image Synthesis with Latent Diffusion Models[C]//Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2022.",
+        "Copet J, Kreuk F, Gat I, et al. Simple and Controllable Music Generation[C]//Advances in Neural Information Processing Systems. 2023.",
+        "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
+        "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
+        "Plachtaa. Seed-VC: zero-shot singing voice conversion toolkit[EB/OL]. GitHub repository.",
+        "Lee S, Ping W, Ginsburg B, Catanzaro B, Yoon S. BigVGAN: A Universal Neural Vocoder with Large-Scale Training[C]//International Conference on Learning Representations. 2023.",
+        "McFee B, Raffel C, Liang D, et al. librosa: Audio and Music Signal Analysis in Python[C]//Proceedings of the 14th Python in Science Conference. 2015.",
+        "Kilgour K, Zuluaga M, Roblek D, Sharifi M. Fréchet Audio Distance: A Reference-Free Metric for Evaluating Music Enhancement Algorithms[C]//Interspeech. 2019.",
+    ]
+
+    return [
+        {
+            "type": "title",
+            "cn": "面向智能语音处理的音乐生成与授权歌声音色转换系统",
+            "en": "A Music Generation and Authorized Singing-Voice Timbre Conversion System for Intelligent Speech Processing",
+        },
+        {
+            "type": "abstract",
+            "cn": (
+                "针对音乐生成系统难以同时满足风格可控、声线可替换和实验可复现的问题，本文提出一种面向智能语音处理课程与科研原型验证的双路径音频处理系统。"
+                "系统将文本到音乐生成与授权歌声音色转换拆分为两个独立研究变量：前者以 ACE-Step 为基础模型，通过 LoRA 对目标 EDM 数据域进行参数高效适配；"
+                "后者以 Demucs 完成人声与伴奏分离，以 Seed-VC 完成零样本歌声音色转换，并在转换后执行去沙哑、能量包络保持、轻混响和伴奏重混。"
+                "为避免仅凭单个听感样例给出结论，本文设计了任务级证据链：每次实验保存输入音频、分轨结果、转换人声、重混结果、命令日志、参数 JSON、波形频谱图和完整 Mel 水印图。"
+                f"在音乐生成路径中，系统使用 {total} 条 8 秒 EDM 片段进行数据域适配，并保留 train/validation/test={train}/{val}/{test} 的划分；"
+                f"在段落级增强实验中，进一步构建 {section15_clips} 条 15 秒片段，覆盖 {section15_summary} 等结构标签。"
+                f"在授权音色转换实验中，系统完成任务 {voice_id} 的端到端处理，输出时长 {duration:.1f} 秒，BPM={metrics.get('bpm', 0):.1f}，"
+                f"RMS={metrics.get('rms', 0):.4f}，低频比例={metrics.get('low_freq', 0):.4f}，Seed-VC 运行代价 RTF={rtf_text}。"
+                "实验结果表明，该系统能够把音乐风格适配、歌声音色迁移、分轨重混和可复现证据管理组织为一个可检验的智能音频处理流程。"
+                "项目源代码仓库地址：https://github.com/anmoryli/edm-adapter。"
+            ),
+            "en": (
+                "This paper presents a dual-path intelligent audio-processing system for controllable music generation and authorized singing-voice timbre conversion. "
+                "The generation path adapts ACE-Step to an EDM domain through LoRA fine-tuning, while the conversion path combines Demucs source separation, Seed-VC timbre conversion, "
+                "artifact suppression, dynamics preservation, light vocal reverb, and accompaniment remixing. The system records task-level evidence including stems, converted vocals, remix outputs, logs, JSON metadata, waveform diagnostics, and full Mel-spectrogram watermark figures. "
+                "Experiments demonstrate that the proposed engineering framework can separate style adaptation from vocal timbre transfer and provide reproducible evidence for intelligent speech-processing analysis. "
+                "Source code repository: https://github.com/anmoryli/edm-adapter."
+            ),
+            "keywords": "智能语音处理；音乐生成；歌声音色转换；ACE-Step；LoRA；Demucs；Seed-VC；分轨重混；可复现实验",
+        },
+        {"type": "h1", "text": "1 引言"},
+        {
+            "type": "p",
+            "text": (
+                "智能语音处理的研究对象已经从传统语音识别、语音增强和语音合成扩展到音乐生成、歌声转换、说话人迁移和多轨音频理解。"
+                "与普通 TTS 不同，歌声音色转换需要在保留歌词时序、咬字节奏和基频轮廓的同时改变声学音色；与纯文本音乐生成不同，它还必须处理源歌曲中人声、伴奏和混音空间之间的耦合。"
+                "因此，若把“生成音乐”和“更换歌手音色”混为一个黑箱任务，就无法判断最终结果来自风格模型、音色模型、分轨质量还是后处理参数。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文围绕 EDM-Adapter 系统重新组织研究问题：第一，如何在本地资源约束下对大型音乐生成模型进行参数高效风格适配；"
+                "第二，如何把上传歌曲中的人声内容和 F0 轨迹与授权目标音色嵌入结合，生成新的目标声线；第三，如何在网页系统中保存足够的中间证据，使实验能够被复核。"
+                "本文的贡献不是声称重新训练一个完整基础模型，而是提出一个可运行、可追踪、模块边界清晰的智能音频处理框架。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文主要贡献包括：1）设计音乐生成与歌声音色转换的双路径系统架构，避免 LoRA 风格适配与 Seed-VC 音色迁移相互混淆；"
+                "2）给出授权歌声音色转换的形式化定义和工程实现链路，包括分轨、转换、去沙哑、包络保持、轻混响和重混；"
+                "3）建立任务级证据链，将 wav、png、json 和 log 作为最小复现实验单元；4）在报告中引入完整 Mel 频谱负形水印，用于标识 AI 生成结果并保留整首歌谱图证据。"
+            ),
+        },
+        {"type": "figure", "path": figs["system"], "caption": "图1 系统总体架构。系统将文本到音乐生成、授权歌声音色转换和任务级证据记录组织为三个相互独立但可追踪的模块。"},
+        {"type": "h1", "text": "2 相关工作与问题定义"},
+        {
+            "type": "p",
+            "text": (
+                "潜变量扩散模型已经成为音频与音乐生成的重要技术路线。ACE-Step 将文本条件、音乐语义表征和压缩声学潜变量结合起来，使长时音乐生成可以在较低采样成本下完成。"
+                "LoRA 则通过低秩矩阵更新减少可训练参数，使本地实验能够在不破坏基础模型主体能力的情况下学习目标数据域偏移。"
+                "另一方面，歌声音色转换通常不从文字重新合成歌声，而是从源音频估计内容表征和 F0，再用目标音色条件替换声学说话人或歌手特征。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表1 三类音频任务的边界",
+            "headers": ["任务", "输入条件", "核心约束"],
+            "rows": [
+                ["文本到语音 TTS", "文本、说话人或音色条件", "生成朗读语音，不要求匹配某首歌的旋律和节拍"],
+                ["文本到音乐生成", "prompt、歌词、seed、LoRA 权重", "生成新的音乐结构，重点是风格、段落、混音和可控随机性"],
+                ["歌声音色转换", "源人声、F0、目标音色样本", "保持歌词时序和旋律走势，只替换声学音色并重新混回伴奏"],
+            ],
+            "docx_widths": [2100, 3300, 3960],
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文将授权歌声音色转换定义为条件波形重建问题。给定源歌曲 x、目标音色参考 r 和可选半音偏移 Δp，系统从 x 中估计内容表征 C(x) 与基频轨迹 F0(x)，"
+                "从 r 中提取音色嵌入 e(r)，再由转换模型和声码器生成转换波形 y_vc。该定义把内容保持、音高稳定、音色相似和波形音质四个评价维度分开。"
+            ),
+        },
+        {"type": "figure", "path": figs["task_model"], "caption": "图2 授权歌声音色转换的问题定义。源歌曲提供内容与 F0，目标参考样本提供音色嵌入，转换模型与声码器负责生成目标声线。"},
+        {
+            "type": "formula",
+            "text": "y_vc = Vocoder(SeedVC(C(x), F0(x)+Delta p, e(r)))",
+            "latex": r"y_{vc}=\mathrm{Vocoder}\left(f_{\mathrm{SeedVC}}(C(x),F_0(x)+\Delta p,e(r))\right)",
+        },
+        {
+            "type": "table",
+            "caption": "表2 符号定义",
+            "headers": ["符号", "含义", "在系统中的来源"],
+            "rows": [
+                ["x", "源歌曲或源人声音频", "用户上传音频或 Demucs 分离后的 vocals"],
+                ["C(x)", "歌词内容、音素时序和歌唱内容表征", "Seed-VC 内容编码器"],
+                ["F0(x)", "源人声基频轨迹", "转换器内部 F0/音高条件"],
+                ["e(r)", "授权目标音色嵌入", "目标参考样本或本地目标音色目录"],
+                ["y_vc", "转换后人声", "Seed-VC 与声码器输出，经后处理修正"],
+                ["a", "分离伴奏", "drums、bass、other 三轨重混"],
+            ],
+            "docx_widths": [1500, 3900, 3960],
+        },
+        {"type": "h1", "text": "3 方法"},
+        {"type": "h2", "text": "3.1 音乐生成与 LoRA 适配"},
+        {
+            "type": "p",
+            "text": (
+                f"音乐生成路径以 ACE-Step 为基础模型，训练数据包含 {total} 条 8 秒 EDM 片段，划分为 train/validation/test={train}/{val}/{test}。"
+                f"系统从 step={init_step} 的本地 LoRA bundle 继续训练 {local_step} 个本地 step，到 step={global_step}；可训练范围覆盖最后 {train_last_n_blocks} 个 Transformer block，"
+                f"可训练参数约 {trainable_params}。这种设计保持 MusicDCAE、文本编码器和大部分主干模型冻结，只在末端去噪决策层学习目标 EDM 数据域偏移。"
+            ),
+        },
+        {
+            "type": "formula",
+            "text": "W' = W + DeltaW, DeltaW = alpha/r · B · A",
+            "latex": r"W'=W+\Delta W,\quad \Delta W=\frac{\alpha}{r}BA",
+        },
+        {
+            "type": "p",
+            "text": (
+                "为避免把随机 seed 差异误判为 LoRA 效果，系统在网页端固定 prompt、seed、scheduler、采样步数和后处理参数，分别生成 baseline 与 LoRA 输出。"
+                "同 seed 对照使风格适配效果可以回到相同随机初态下分析，而不是依赖单次主观听感。"
+            ),
+        },
+        {"type": "figure", "path": figs["lora"], "caption": "图3 LoRA 音乐生成路径。LoRA 只更新少量末端参数，输出通过同 seed baseline 进行控制变量对照。"},
+        {"type": "h2", "text": "3.2 授权歌声音色转换链路"},
+        {
+            "type": "p",
+            "text": (
+                "歌声音色转换链路包含输入建档、音频标准化、可选分轨、转换输入清理、Seed-VC 推理、人声后处理和伴奏重混。"
+                "系统优先使用 Demucs 将上传歌曲分解为 vocals、drums、bass 和 other；若 vocals 存在，则只将 vocals 送入 Seed-VC，避免伴奏被错误转换。"
+                "drums、bass 和 other 合成为伴奏 a，并在最后与转换后人声重新混合。"
+            ),
+        },
+        {"type": "figure", "path": figs["vc_pipeline"], "caption": "图4 授权音色转换与新歌重混流水线。系统先分离人声与伴奏，再完成音色替换、人声修复和重混输出。"},
+        {
+            "type": "formula",
+            "text": "y_mix = Normalize(y_vc + g_v * a)",
+            "latex": r"y_{mix}=\mathrm{Normalize}\left(y_{vc}+g_v\cdot a\right)",
+        },
+        {
+            "type": "p",
+            "text": (
+                "式中 g_v 为人声重混增益。转换后人声并不直接与伴奏相加，而是先经过高频去沙哑、能量包络匹配、峰值约束和轻混响。"
+                "去沙哑用于抑制声码器或分轨残留带来的高频毛刺；包络匹配用于保留源演唱力度；轻混响用于减少干声贴耳感，使换音色人声更自然地融入伴奏。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表3 音色转换模块接口",
+            "headers": ["阶段", "输入", "输出与作用"],
+            "rows": [
+                ["建档", "上传歌曲、目标音色目录、pitch、steps、CFG", "生成任务目录和参数记录"],
+                ["分轨", "标准化后的歌曲", "vocals、drums、bass、other"],
+                ["预处理", "vocals", "去除部分分轨高频噪声，得到转换输入"],
+                ["音色转换", "清理后 vocals、目标音色参考", "Seed-VC raw 转换人声"],
+                ["后处理", "raw 人声、源 vocals 包络", "去沙哑、力度保持、轻混响后的 y_vc"],
+                ["重混", "y_vc、伴奏 a、人声增益 g_v", "新歌 y_mix 和 Mel 证据图"],
+            ],
+            "docx_widths": [1600, 3300, 4460],
+            "font_size": 8.9,
+        },
+        {"type": "h2", "text": "3.3 证据链与 AI 水印"},
+        {
+            "type": "p",
+            "text": (
+                "为了使实验不依赖口头描述，系统把一次任务的所有关键中间产物写入同一目录。"
+                "包括 uploaded_song、分离 stems、converted_vocal_raw、converted_vocal_dry、converted_vocal_reverb、voice_conversion_mix、analysis.txt、task.json 和 task.log。"
+                "报告中的图表均由这些文件重新生成，避免出现无法追溯的数据来源。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "针对 AI 生成结果标识，系统在最终音频的完整 Mel 图谱末尾追加一段频谱负形水印区域。"
+                "该水印不是普通文字叠加，而是在 Mel 能量矩阵中构造低能量负形和高能量边缘，使审阅者打开完整谱图时可以看到“AI生成”标记，同时保留整首歌的频谱连续性。"
+            ),
+        },
+        {"type": "figure", "path": figs["provenance"], "caption": "图5 任务目录中的可复现实验证据。每个输出均可追溯到同一任务 ID、参数记录和命令日志。"},
+        {"type": "h1", "text": "4 实验设置"},
+        {
+            "type": "p",
+            "text": (
+                "实验分为三组：第一组验证 LoRA 音乐生成路径是否在同 seed 条件下改变目标风格倾向；"
+                "第二组验证授权音色转换链路是否能完成分轨、转换、后处理和伴奏重混；第三组验证 AI Mel 水印是否能够在完整谱图末尾以频谱形态显现。"
+                "三组实验共享任务级记录机制，但评价对象不同，因此不混合成一个总评分。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表4 实验变量与控制条件",
+            "headers": ["实验对象", "固定条件", "变化或观察项"],
+            "rows": [
+                ["LoRA 音乐生成", "prompt、seed、采样步数、guidance、后处理链路", "是否加载 LoRA、LoRA 权重、输出声学指标"],
+                ["歌声音色转换", "源歌曲、目标音色目录、分轨策略", "pitch shift、steps、CFG、去沙哑、情感保持、人声增益"],
+                ["后处理质量", "Seed-VC raw 输出和伴奏", "dry/reverb 人声、包络保持、重混响度"],
+                ["Mel 水印", "最终输出 wav、采样率、Mel 参数", "末尾水印时长、负形字样、完整谱图可读性"],
+            ],
+            "docx_widths": [2100, 3900, 3360],
+            "font_size": 8.8,
+        },
+        {
+            "type": "table",
+            "caption": "表5 客观指标与解释",
+            "headers": ["指标", "计算对象", "用途"],
+            "rows": [
+                ["BPM", "最终重混音频", "检查节奏估计是否保持在合理范围"],
+                ["RMS", "stem 与 mix 波形", "比较人声、伴奏和最终输出的能量平衡"],
+                ["低频比例", "0-250 Hz 能量占比", "检查 EDM 低频强度和伴奏泄漏"],
+                ["谱质心", "短时频谱", "辅助判断明亮度和高频伪影"],
+                ["起音密度", "onset 事件数/秒", "分析瞬态和节奏稠密度"],
+                ["RTF", "推理耗时/音频时长", "评估长音频离线处理成本"],
+            ],
+            "docx_widths": [1700, 3000, 4660],
+            "font_size": 8.8,
+        },
+        {"type": "figure", "path": figs["control_matrix"], "caption": "图6 实验变量控制矩阵。系统将 LoRA 风格适配、歌声音色转换和后处理质量修复拆成独立评价对象。"},
+        {"type": "h1", "text": "5 实验结果与分析"},
+        {"type": "h2", "text": "5.1 授权音色转换链路验证"},
+        {
+            "type": "p",
+            "text": (
+                f"在任务 {voice_id} 中，系统保存了从上传音频到最终重混结果的完整证据链。"
+                f"输出音频时长为 {duration:.1f} 秒，采样率为 {sr} Hz，BPM={metrics.get('bpm', 0):.1f}，RMS={metrics.get('rms', 0):.4f}，"
+                f"低频比例={metrics.get('low_freq', 0):.4f}，起音密度={metrics.get('onset', 0):.2f}/s。"
+                "这些指标不直接等价于主观音质，但可以用于判断分轨、重混和高频伪影是否出现明显异常。"
+            ),
+        },
+        {"type": "figure", "path": figs["stem_evidence"], "caption": "图7 分离音轨与重混证据。左侧比较各 stem 和最终输出能量，右侧列出任务级产物，说明结果来自可复核链路。"},
+        {"type": "figure", "path": figs["vc_evidence"], "caption": "图8 音色转换输出的波形、频谱与客观指标。该图用于检查响度、频带分布和短时异常。"},
+        {
+            "type": "table",
+            "caption": "表6 实际音色转换任务记录",
+            "headers": ["项目", "记录", "解释"],
+            "rows": metric_rows,
+            "docx_widths": [2000, 3800, 3560],
+            "font_size": 8.8,
+        },
+        {"type": "h2", "text": "5.2 LoRA 生成路径与段落级数据增强"},
+        {
+            "type": "p",
+            "text": (
+                "LoRA 生成路径的实验目标不是证明某一首输出主观上更像目标艺术家，而是建立可复现的目标域适配证据。"
+                "同 seed baseline 对照用于排除随机初态影响；15 秒段落级数据集用于增强 intro、breakdown、build-up、drop 等结构片段的学习信号。"
+                f"当前段落级数据集包含 {section15_clips} 条样本、{section15_sources} 个来源，结构分布为 {section15_summary}。"
+            ),
+        },
+        {"type": "figure", "path": figs["training"], "caption": "图9 同 seed LoRA 与 baseline 的客观音频诊断。该图作为音乐生成路径的基线证据，与音色转换路径分开解释。"},
+        {"type": "figure", "path": figs["section15_watermark"], "caption": "图10 段落级 LoRA 二次微调与 AI 水印 Mel 证据。右侧完整 Mel 图谱末尾显示由频谱能量构成的“AI生成”负形水印。"},
+        {"type": "h2", "text": "5.3 后处理、运行代价与误差来源"},
+        {
+            "type": "p",
+            "text": (
+                f"针对长音频任务，系统记录了输入时长约 {long_duration:.1f} 秒、扩散步数 {diffusion_steps}、CFG={cfg_rate:.2f}、"
+                f"去沙哑强度 {dehiss_strength:.2f}、情感保持 {emotion_strength:.2f} 和预计耗时约 {long_est_min:.1f} 分钟。"
+                "在 CPU 或离线环境中，整曲转换不适合用交互式按钮反复试错，因此本文采用短片段筛参、整曲离线复核的实验策略。"
+            ),
+        },
+        {"type": "figure", "path": figs["quality_chain"], "caption": "图11 去沙哑、情感力度保持与轻混响后处理链路。该链路用于抑制高频毛刺、保留演唱力度并改善人声融入伴奏的自然度。"},
+        {"type": "figure", "path": figs["runtime_budget"], "caption": "图12 Seed-VC 长音频推理资源预算。图中区分短片段实测、整曲估计和离线任务策略。"},
+        {"type": "figure", "path": figs["error_analysis"], "caption": "图13 音色转换异常来源分析。沙哑、跑调、耗时和音色不稳定分别映射到分轨、F0、声码器、参考样本和资源预算等可检查环节。"},
+        {"type": "h1", "text": "6 讨论"},
+        {
+            "type": "p",
+            "text": (
+                "本文系统的优点是模块边界明确、证据链完整，并且能把用户在网页端观察到的问题映射到具体技术环节。"
+                "如果输出声音沙哑，应首先检查分轨泄漏和声码器高频伪影，再调节去沙哑强度；如果情感不足，应检查源 vocals 包络和 emotion_strength；"
+                "如果整曲任务耗时过长，应采用短片段参数筛选和离线整曲处理，而不是把超时问题写成模型失败。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "局限性也需要明确。第一，当前音色相似性仍缺少大规模主观听评和统计显著性检验；第二，Seed-VC 在长歌曲上的推理代价较高，CPU 环境更适合离线复核；"
+                "第三，目标音色样本的授权、质量和情绪匹配会显著影响最终结果；第四，LoRA 音乐生成路径与歌声音色转换路径虽然在系统中并列呈现，但二者评价指标不同，不能用同一个分数概括。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表7 局限性与后续改进",
+            "headers": ["问题", "当前处理", "后续工作"],
+            "rows": [
+                ["音色相似性量化不足", "保留任务证据和客观声学指标", "增加目标音色相似度模型和人工听评"],
+                ["长音频推理慢", "短片段筛参、整曲离线复核", "加入缓存、分段拼接和 GPU 推理部署"],
+                ["分轨泄漏影响转换", "保存 stems 并记录警告", "加入 vocals 能量阈值和分轨质量评分"],
+                ["授权与伦理约束", "以用户提供目标样本为条件", "加入授权确认、来源记录和水印检测流程"],
+            ],
+            "docx_widths": [2400, 3300, 3660],
+            "font_size": 8.8,
+        },
+        {"type": "h1", "text": "7 结论"},
+        {
+            "type": "p",
+            "text": (
+                "本文提出并实现了一个面向智能语音处理的音乐生成与授权歌声音色转换系统。"
+                "系统在音乐生成侧使用 ACE-Step 与 LoRA 完成目标 EDM 数据域适配，在歌声音色转换侧使用 Demucs 和 Seed-VC 完成人声分离、音色迁移和伴奏重混。"
+                "与单纯展示生成样例不同，本文强调任务级复现实验单元，保存输入、分轨、转换、后处理、重混、日志、指标和 Mel 水印图。"
+                "实验表明，该系统能够把音乐风格适配、授权音色转换和 AI 生成标识组织为一条可检查的工程链路，为后续加入主观听评、音色相似度度量和高性能推理部署提供基础。"
+            ),
+        },
+        {"type": "references", "items": refs},
+    ]
+
+
+def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
+    stats = ctx.dataset_stats
+    manifest = ctx.manifest
+    total = int(stats.get("sample_count", 6016) or 6016)
+    split = stats.get("split", {}) if isinstance(stats.get("split", {}), dict) else {}
+    train = int(split.get("train", 4833) or 4833)
+    val = int(split.get("val", 557) or 557)
+    test = int(split.get("test", 626) or 626)
+    global_step = int(manifest.get("global_step", 1200) or 1200)
+    init_step = int(manifest.get("init_global_step", 960) or 960)
+    local_step = int(manifest.get("local_step", max(global_step - init_step, 0)) or max(global_step - init_step, 0))
+    train_last_n_blocks = int(manifest.get("train_last_n_blocks", 4) or 4)
+    trainable_params = "2.02M" if train_last_n_blocks >= 4 else "1.12M"
+
+    voice = _latest_voice_conversion_record()
+    task = voice.get("task", {}) if isinstance(voice.get("task", {}), dict) else {}
+    outputs = task.get("outputs", {}) if isinstance(task.get("outputs", {}), dict) else {}
+    stems = outputs.get("stems", {}) if isinstance(outputs.get("stems", {}), dict) else {}
+    task_dir = Path(voice.get("task_dir", Path()))
+    mix_path = Path(voice.get("mix", Path()))
+    duration, sr = _audio_info(mix_path) if mix_path.exists() else (0.0, 0)
+    metrics = _parse_voice_metrics(task.get("analysis", ""))
+    rtf = _parse_rtf(task_dir) if task_dir.exists() else None
+    rtf_text = f"{rtf:.2f}" if rtf else "未记录"
+    voice_id = voice.get("id", "未记录")
+
+    task_records = _voice_conversion_task_records()
+    running_record = task_records["running"][-1] if task_records["running"] else {}
+    failed_record = task_records["failed"][-1] if task_records["failed"] else {}
+    long_record = running_record or failed_record or (task_records["completed"][-1] if task_records["completed"] else {})
+    long_params = long_record.get("params", {}) if isinstance(long_record.get("params", {}), dict) else {}
+    long_duration = float(long_record.get("duration", 0.0) or 0.0)
+    long_est_min = float(long_record.get("estimated_min", 0.0) or 0.0)
+    diffusion_steps = int(long_params.get("diffusion_steps", 30) or 30)
+    cfg_rate = float(long_params.get("inference_cfg_rate", 0.75) or 0.75)
+    dehiss_strength = float(long_params.get("dehiss_strength", 0.0) or 0.0)
+    emotion_strength = float(long_params.get("emotion_strength", 0.0) or 0.0)
+
+    section15_report = read_json(ROOT / "outputs" / "datasets" / "avicii_section15_v2" / "reports" / "build_report.json", {})
+    section_counts = section15_report.get("section_counts") or {}
+    split_counts = section15_report.get("split_counts") or {}
+    section15_clips = int(section15_report.get("clips", 360) or 360)
+    section15_sources = int(section15_report.get("sources", 142) or 142)
+    section15_summary = (
+        f"drop={section_counts.get('drop', 130)}, breakdown={section_counts.get('breakdown', 86)}, "
+        f"build-up={section_counts.get('build-up', 65)}, intro={section_counts.get('intro', 36)}, "
+        f"loop={section_counts.get('loop', 25)}, outro={section_counts.get('outro', 18)}"
+    )
+
+    stem_status = "已生成 vocals、drums、bass、other，并由 drums/bass/other 合成伴奏" if stems.get("vocals") else "未记录完整 stems"
+    metric_rows = [
+        ["任务编号", voice_id, "作为复现实验单元的索引"],
+        ["输出文件", mix_path.name if mix_path.exists() else "未产出", f"{duration:.1f}s / {sr}Hz" if duration else "未记录"],
+        ["分轨状态", stem_status, "判断是否满足“人声转换+伴奏重混”的实验前提"],
+        ["客观指标", f"BPM={metrics.get('bpm', 0):.1f}, RMS={metrics.get('rms', 0):.4f}", f"低频比例={metrics.get('low_freq', 0):.4f}, onset={metrics.get('onset', 0):.2f}/s"],
+        ["运行代价", "Seed-VC 离线推理", f"RTF={rtf_text}"],
+    ]
+
+    refs = [
+        "Ho J, Jain A, Abbeel P. Denoising Diffusion Probabilistic Models[C]//Advances in Neural Information Processing Systems. 2020.",
+        "Rombach R, Blattmann A, Lorenz D, Esser P, Ommer B. High-Resolution Image Synthesis with Latent Diffusion Models[C]//Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2022.",
+        "Copet J, Kreuk F, Gat I, et al. Simple and Controllable Music Generation[C]//Advances in Neural Information Processing Systems. 2023.",
+        "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
+        "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
+        "Plachtaa. Seed-VC: zero-shot singing voice conversion toolkit[EB/OL]. GitHub repository.",
+        "Lee S, Ping W, Ginsburg B, Catanzaro B, Yoon S. BigVGAN: A Universal Neural Vocoder with Large-Scale Training[C]//International Conference on Learning Representations. 2023.",
+        "McFee B, Raffel C, Liang D, et al. librosa: Audio and Music Signal Analysis in Python[C]//Proceedings of the 14th Python in Science Conference. 2015.",
+        "Kilgour K, Zuluaga M, Roblek D, Sharifi M. Fréchet Audio Distance: A Reference-Free Metric for Evaluating Music Enhancement Algorithms[C]//Interspeech. 2019.",
+    ]
+
+    return [
+        {
+            "type": "title",
+            "cn": "面向智能语音处理的音乐生成与授权歌声音色转换系统",
+            "en": "A Music Generation and Authorized Singing-Voice Timbre Conversion System for Intelligent Speech Processing",
+        },
+        {
+            "type": "abstract",
+            "cn": (
+                "面向音乐生成、歌声音色替换和网页化实验复现的综合需求，本文提出并实现一种双路径智能音频处理系统。"
+                "系统将文本到音乐生成与授权歌声音色转换拆分为两个独立研究变量：音乐生成路径以 ACE-Step 为基础模型，通过 LoRA 对目标 EDM 数据域进行参数高效适配；"
+                "音色转换路径以 Demucs 完成人声与伴奏分离，以 Seed-VC 完成零样本歌声音色转换，并在转换后执行去沙哑、能量包络保持、轻混响和伴奏重混。"
+                "为避免仅凭单个听感样例给出结论，本文建立任务级证据链：每次实验保存输入音频、分轨结果、转换人声、伴奏重混、命令日志、参数 JSON、波形频谱诊断图和完整 Mel 水印图。"
+                f"音乐生成实验使用 {total} 条 8 秒 EDM 片段，训练/验证/测试划分为 {train}/{val}/{test}；段落级增强实验进一步构建 {section15_clips} 条 15 秒片段，覆盖 {section15_summary} 等结构标签。"
+                f"授权音色转换实验完成任务 {voice_id} 的端到端处理，输出时长 {duration:.1f} 秒，BPM={metrics.get('bpm', 0):.1f}，RMS={metrics.get('rms', 0):.4f}，低频比例={metrics.get('low_freq', 0):.4f}，Seed-VC 运行代价 RTF={rtf_text}。"
+                "实验结果表明，该系统能够把风格适配、歌声音色迁移、分轨重混和 AI 生成标识组织为可复核的智能语音处理流程。"
+                "项目源代码仓库地址：https://github.com/anmoryli/edm-adapter。"
+            ),
+            "en": (
+                "This paper presents a dual-path intelligent audio-processing system for controllable music generation and authorized singing-voice timbre conversion. "
+                "The generation path adapts ACE-Step to an EDM domain through LoRA fine-tuning, while the conversion path combines Demucs source separation, Seed-VC timbre conversion, artifact suppression, dynamics preservation, light vocal reverb, and accompaniment remixing. "
+                "The system records task-level evidence including stems, converted vocals, remix outputs, command logs, JSON metadata, waveform diagnostics, and full Mel-spectrogram watermark figures. "
+                "Experiments show that the proposed prototype can separate style adaptation from vocal timbre transfer and provide reproducible evidence for intelligent speech-processing analysis. "
+                "Source code repository: https://github.com/anmoryli/edm-adapter."
+            ),
+            "keywords": "智能语音处理；音乐生成；歌声音色转换；ACE-Step；LoRA；Demucs；Seed-VC；分轨重混；可复现实验",
+        },
+        {"type": "h1", "text": "1 引言"},
+        {
+            "type": "p",
+            "text": (
+                "智能语音处理的研究对象正在从传统语音识别、语音增强和文本到语音合成扩展到音乐生成、歌声转换、多轨分离和跨媒体音频编辑。"
+                "这类任务不再只关心语音是否可懂，还需要同时处理旋律、节奏、基频轨迹、音色身份、混音空间和生成结果的可追溯性。"
+                "在实际网页系统中，用户往往希望上传一首歌后保留旋律与歌词时序，只改变歌手音色；同时也希望模型能够学习某类电子音乐制作风格，并与基础模型输出进行同 seed 对照。"
+                "如果把这些能力混在一个黑箱按钮里，最终差异可能来自采样 seed、LoRA 权重、分轨误差、F0 估计、声码器伪影或后处理参数，结论将无法复核。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文围绕 EDM-Adapter 原型系统重新组织研究问题。第一，如何在本地资源约束下对大规模音乐生成模型进行参数高效风格适配；"
+                "第二，如何把上传歌曲中的人声内容和 F0 轨迹与授权目标音色样本结合，生成新的目标声线；"
+                "第三，如何让网页端每一次任务都留下足够的中间产物和图表证据，使实验结果可以被复核、比较和定位问题。"
+                "因此，本文的目标不是宣称重新训练一个完整基础模型，而是给出一个边界清晰、流程可运行、证据可追踪的智能音频处理框架。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文主要贡献包括：1）设计音乐生成与授权歌声音色转换的双路径系统架构，避免 LoRA 风格适配与 Seed-VC 音色迁移相互混淆；"
+                "2）给出歌声音色转换的形式化定义和工程实现链路，包括 Demucs 分轨、Seed-VC 转换、去沙哑、包络保持、轻混响和伴奏重混；"
+                "3）建立任务级证据链，将 wav、png、json 和 log 组织为最小复现实验单元；"
+                "4）在最终生成音频的完整 Mel 图谱末尾加入由频谱能量构成的“AI生成”负形水印，用于标识 AI 生成结果。"
+            ),
+        },
+        {"type": "figure", "path": figs["system"], "caption": "图 系统总体架构。系统将文本到音乐生成、授权歌声音色转换和任务级证据记录组织为三个相互独立但可追踪的模块。"},
+        {"type": "h1", "text": "2 相关工作与问题定义"},
+        {
+            "type": "p",
+            "text": (
+                "潜变量扩散模型已经成为图像、音频与音乐生成中的重要技术路线。其核心思想是在压缩潜空间中执行逐步去噪，使生成过程可以在较低计算成本下建模长时序信号。"
+                "ACE-Step 将文本条件、歌词条件、音乐语义表征和压缩声学潜变量结合起来，为长时音乐生成提供基础模型能力。"
+                "LoRA 则通过冻结预训练权重并学习低秩增量，使大模型适配不再需要更新全部参数，从而降低显存占用、训练时间和实验变量数量。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "歌声音色转换与普通 TTS 不同。TTS 的输入通常是文本和说话人条件，目标是从零合成一段朗读语音；"
+                "歌声音色转换的输入是已经存在的源人声或源歌曲，要求保留歌词时序、咬字节奏、旋律走向和情绪力度，同时改变声学音色身份。"
+                "因此，转换链路必须显式处理人声与伴奏的耦合关系：伴奏不应被送入声线转换模型，转换后人声也需要重新与伴奏在响度、动态和空间感上融合。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 三类音频任务的边界",
+            "headers": ["任务", "输入条件", "核心约束"],
+            "rows": [
+                ["文本到语音 TTS", "文本、说话人或音色条件", "生成朗读语音，不要求匹配某首歌的旋律和节拍"],
+                ["文本到音乐生成", "prompt、歌词、seed、可选 LoRA", "生成新的音乐结构，重点是风格、段落、混音和可控随机性"],
+                ["歌声音色转换", "源人声、F0、目标音色样本", "保持歌词时序和旋律走向，只替换声学音色并重混伴奏"],
+            ],
+            "docx_widths": [2100, 3300, 3960],
+        },
+        {
+            "type": "p",
+            "text": (
+                "本文将授权歌声音色转换定义为条件波形重建问题。给定源歌曲 x、目标音色参考 r 和可选半音偏移 Delta p，"
+                "系统从 x 中估计内容表征 C(x) 与基频轨迹 F0(x)，从 r 中提取音色嵌入 e(r)，再由转换模型和声码器生成转换波形 y_vc。"
+                "该定义把内容保持、音高稳定、音色相似和波形音质四个评价维度分开，使后续误差分析能够定位到具体模块。"
+            ),
+        },
+        {"type": "figure", "path": figs["task_model"], "caption": "图 授权歌声音色转换的问题定义。源歌曲提供内容与 F0，目标参考样本提供音色嵌入，转换模型与声码器负责生成目标声线。"},
+        {
+            "type": "formula",
+            "text": "y_vc = Vocoder(SeedVC(C(x), F0(x)+Delta p, e(r)))",
+            "latex": r"y_{vc}=\mathrm{Vocoder}\left(f_{\mathrm{SeedVC}}(C(x),F_0(x)+\Delta p,e(r))\right)",
+        },
+        {"type": "page_break"},
+        {
+            "type": "table",
+            "caption": "表 符号定义",
+            "headers": ["符号", "含义", "在系统中的来源"],
+            "rows": [
+                ["x", "源歌曲或源人声音频", "用户上传音频或 Demucs 分离后的 vocals"],
+                ["C(x)", "歌词内容、音素时序和歌唱内容表征", "Seed-VC 内容编码器"],
+                ["F0(x)", "源人声基频轨迹", "转换器内部 F0/音高条件"],
+                ["e(r)", "授权目标音色嵌入", "目标参考样本或本地目标音色目录"],
+                ["y_vc", "转换后人声", "Seed-VC 与声码器输出，经后处理修正"],
+                ["a", "分离伴奏", "drums、bass、other 三轨重混"],
+            ],
+            "docx_widths": [1500, 3900, 3960],
+            "font_size": 8.8,
+        },
+        {"type": "h1", "text": "3 方法"},
+        {"type": "h2", "text": "3.1 音乐生成与 LoRA 适配"},
+        {
+            "type": "p",
+            "text": (
+                f"音乐生成路径以 ACE-Step 为基础模型，训练数据包含 {total} 条 8 秒 EDM 片段，划分为 train/validation/test={train}/{val}/{test}。"
+                f"系统从 step={init_step} 的本地 LoRA bundle 继续训练 {local_step} 个本地 step，到 step={global_step}；"
+                f"可训练范围覆盖最后 {train_last_n_blocks} 个 Transformer block，参数量约 {trainable_params}。"
+                "这种设置保留 MusicDCAE、文本编码器和大部分扩散主干的通用能力，只让末端去噪决策层学习目标 EDM 数据域的节奏、低频、合成器音色和混音偏移。"
+            ),
+        },
+        {
+            "type": "formula",
+            "text": "W' = W + DeltaW, DeltaW = alpha/r · B · A",
+            "latex": r"W'=W+\Delta W,\quad \Delta W=\frac{\alpha}{r}BA",
+        },
+        {
+            "type": "p",
+            "text": (
+                "LoRA 实验采用同 seed 控制变量设计。网页端固定 prompt、歌词、seed、scheduler、采样步数、guidance 和后处理参数，"
+                "只改变是否加载 LoRA adapter 或 LoRA 权重强度。这样，baseline 与 LoRA 输出从相同随机初态出发，差异主要来自 adapter 对去噪轨迹的影响，"
+                "而不是来自不同 seed 造成的偶然旋律、鼓组或和声变化。"
+            ),
+        },
+        {"type": "page_break"},
+        {"type": "figure", "path": figs["lora"], "caption": "图 LoRA 音乐生成路径。LoRA 只更新少量末端参数，输出通过同 seed baseline 进行控制变量对照。"},
+        {
+            "type": "table",
+            "caption": "表 LoRA 音乐生成路径的训练与推理步骤",
+            "headers": ["步骤", "处理内容", "目的"],
+            "rows": [
+                ["数据标准化", "裁剪或补齐 8 秒 EDM 片段，记录 prompt、BPM 和声学特征", "降低训练输入分布漂移"],
+                ["潜变量缓存", "通过 MusicDCAE 缓存 latent 与文本 token", "减少重复编码开销，保证训练可复现"],
+                ["LoRA 续训", "冻结基础模型，仅更新末端 LoRA 参数", "学习目标数据域的局部生成偏移"],
+                ["同 seed 对照", "base 与 LoRA 使用相同 seed、prompt 和采样参数", "排除随机初态差异"],
+                ["客观诊断", "统计 RMS、低频比例、onset 密度和 Mel 图谱", "辅助判断生成差异是否来自风格适配"],
+            ],
+            "docx_widths": [1800, 3900, 3660],
+            "font_size": 8.8,
+        },
+        {"type": "h2", "text": "3.2 授权歌声音色转换链路"},
+        {
+            "type": "p",
+            "text": (
+                "歌声音色转换链路包含输入建档、音频标准化、可选分轨、转换输入清理、Seed-VC 推理、人声后处理和伴奏重混。"
+                "系统优先使用 Demucs 将上传歌曲分解为 vocals、drums、bass 和 other；若 vocals 存在，则只将 vocals 送入 Seed-VC，避免伴奏被错误转换。"
+                "drums、bass 和 other 被合成为伴奏 a，并在最后与转换后人声重新混合，得到完整新歌。"
+            ),
+        },
+        {"type": "figure", "path": figs["vc_pipeline"], "caption": "图 授权音色转换与新歌重混流水线。系统先分离人声与伴奏，再完成音色替换、人声修复和重混输出。"},
+        {
+            "type": "formula",
+            "text": "y_mix = Normalize(y_vc + g_v * a)",
+            "latex": r"y_{mix}=\mathrm{Normalize}\left(y_{vc}+g_v\cdot a\right)",
+        },
+        {
+            "type": "p",
+            "text": (
+                "式中 g_v 为人声重混增益。转换后人声并不直接与伴奏相加，而是先经过高频去沙哑、能量包络匹配、峰值约束和轻混响。"
+                "去沙哑用于抑制分轨泄漏和声码器高频毛刺；包络匹配用于保留源 vocals 的演唱力度和情绪起伏；轻混响用于减弱干声贴耳感，使转换后人声更自然地融入伴奏。"
+            ),
+        },
+        {"type": "page_break"},
+        {
+            "type": "table",
+            "caption": "表 音色转换模块接口",
+            "headers": ["阶段", "输入", "输出与作用"],
+            "rows": [
+                ["建档", "上传歌曲、目标音色目录、pitch、steps、CFG", "生成任务目录和参数记录"],
+                ["分轨", "标准化后的歌曲", "vocals、drums、bass、other"],
+                ["预处理", "vocals", "抑制部分分轨高频噪声，得到转换输入"],
+                ["音色转换", "清理后 vocals、目标音色参考", "Seed-VC raw 转换人声"],
+                ["后处理", "raw 人声、源 vocals 包络", "去沙哑、力度保持、轻混响后的 y_vc"],
+                ["重混", "y_vc、伴奏 a、人声增益 g_v", "新歌 y_mix 和 Mel 证据图"],
+            ],
+            "docx_widths": [1600, 3300, 4460],
+            "font_size": 8.7,
+        },
+        {"type": "h2", "text": "3.3 证据链与 AI 水印"},
+        {
+            "type": "p",
+            "text": (
+                "为了使实验不依赖口头描述，系统把一次任务的所有关键中间产物写入同一目录，包括 uploaded_song、分离 stems、converted_vocal_raw、converted_vocal_dry、"
+                "converted_vocal_reverb、voice_conversion_mix、analysis.txt、task.json 和 task.log。报告中的图表均由这些文件重新生成，避免出现无法追溯的数据来源。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "针对 AI 生成结果标识，系统在最终音频的完整 Mel 图谱末尾追加一段频谱负形水印区域。"
+                "该水印不是普通图片文字叠加，而是在 Mel 能量矩阵中构造低能量笔画和高能量边缘，使审阅者打开完整谱图时可以看到“AI生成”标记，"
+                "同时保留整首歌原有频谱主体和水印区的时间连续性。"
+            ),
+        },
+        {"type": "figure", "path": figs["provenance"], "caption": "图 任务目录中的可复现实验证据。每个输出均可追溯到同一任务 ID、参数记录和命令日志。"},
+        {"type": "page_break"},
+        {"type": "h1", "text": "4 实验设置"},
+        {
+            "type": "p",
+            "text": (
+                "实验分为三组。第一组验证 LoRA 音乐生成路径是否在同 seed 条件下改变目标风格倾向；"
+                "第二组验证授权音色转换链路是否能完成分轨、转换、后处理和伴奏重混；"
+                "第三组验证 AI Mel 水印是否能在完整谱图末尾以频谱形态显现。"
+                "三组实验共享任务级记录机制，但评价对象不同，因此不混合成一个总评分。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 实验变量与控制条件",
+            "headers": ["实验对象", "固定条件", "变化或观察项"],
+            "rows": [
+                ["LoRA 音乐生成", "prompt、seed、采样步数、guidance、后处理链路", "是否加载 LoRA、LoRA 权重、输出声学指标"],
+                ["歌声音色转换", "源歌曲、目标音色目录、分轨策略", "pitch shift、steps、CFG、去沙哑、情感保持、人声增益"],
+                ["后处理质量", "Seed-VC raw 输出和伴奏", "dry/reverb 人声、包络保持、重混响度"],
+                ["Mel 水印", "最终输出 wav、采样率、Mel 参数", "末尾水印时长、负形字样、完整谱图可读性"],
+            ],
+            "docx_widths": [2100, 3900, 3360],
+            "font_size": 8.8,
+        },
+        {
+            "type": "table",
+            "caption": "表 客观指标与解释",
+            "headers": ["指标", "计算对象", "用途"],
+            "rows": [
+                ["BPM", "最终重混音频", "检查节奏估计是否保持在合理范围"],
+                ["RMS", "stem 与 mix 波形", "比较人声、伴奏和最终输出的能量平衡"],
+                ["低频比例", "0-250 Hz 能量占比", "检查 EDM 低频强度和伴奏泄漏"],
+                ["谱质心", "短时频谱", "辅助判断明亮度和高频伪影"],
+                ["起音密度", "onset 事件数/秒", "分析瞬态和节奏稠密度"],
+                ["RTF", "推理耗时/音频时长", "评估长音频离线处理成本"],
+            ],
+            "docx_widths": [1700, 3000, 4660],
+            "font_size": 8.8,
+        },
+        {
+            "type": "p",
+            "text": (
+                "评价协议强调控制变量。LoRA 实验只改变 adapter 相关变量；音色转换实验只改变目标音色、转调和转换参数；"
+                "音质修复实验只比较 Seed-VC raw 与后处理输出。若输出出现沙哑、跑调或节奏错位，系统优先回查分轨、F0、声码器和后处理，而不是把问题笼统归因于模型效果不好。"
+            ),
+        },
+        {"type": "figure", "path": figs["control_matrix"], "caption": "图 实验变量控制矩阵。系统将 LoRA 风格适配、歌声音色转换和后处理质量修复拆成独立评价对象。"},
+        {"type": "figure", "path": figs["evaluation_matrix"], "caption": "图 客观指标与主观听评的评价矩阵。不同模块对应不同主证据，避免单一指标误导结论。"},
+        {"type": "h1", "text": "5 实验结果与分析"},
+        {"type": "h2", "text": "5.1 授权音色转换链路验证"},
+        {
+            "type": "p",
+            "text": (
+                f"在任务 {voice_id} 中，系统保存了从上传音频到最终重混结果的完整证据链。"
+                f"输出音频时长为 {duration:.1f} 秒，采样率为 {sr} Hz，BPM={metrics.get('bpm', 0):.1f}，RMS={metrics.get('rms', 0):.4f}，"
+                f"低频比例={metrics.get('low_freq', 0):.4f}，起音密度={metrics.get('onset', 0):.2f}/s。"
+                "这些指标不直接等价于主观音质，但可以用于判断分轨、重混和高频伪影是否出现明显异常。"
+            ),
+        },
+        {"type": "figure", "path": figs["stem_evidence"], "caption": "图 分离音轨与重混证据。左侧比较各 stem 和最终输出能量，右侧列出任务级产物，说明结果来自可复核链路。"},
+        {"type": "figure", "path": figs["vc_evidence"], "caption": "图 音色转换输出的波形、频谱与客观指标。该图用于检查响度、频带分布和短时异常。"},
+        {"type": "page_break"},
+        {
+            "type": "table",
+            "caption": "表 实际音色转换任务记录",
+            "headers": ["项目", "记录", "解释"],
+            "rows": metric_rows,
+            "docx_widths": [2000, 3800, 3560],
+            "font_size": 8.8,
+        },
+        {
+            "type": "p",
+            "text": (
+                "从结果链路看，分轨文件和重混文件同时存在，说明网页端不再只返回转换后人声，而是能够将转换后人声与伴奏组合为新的完整歌曲。"
+                "若后续听感仍出现沙哑，应重点比较 converted_vocal_raw 与 converted_vocal_reverb 的频谱差异；"
+                "若情绪力度不足，应比较源 vocals 包络与后处理后 y_vc 包络，而不是仅调整重混音量。"
+            ),
+        },
+        {"type": "h2", "text": "5.2 LoRA 生成路径与段落级数据增强"},
+        {
+            "type": "p",
+            "text": (
+                "LoRA 生成路径的实验目标不是证明某一首输出主观上更像目标艺术家，而是建立可复现的目标域适配证据。"
+                "同 seed baseline 对照用于排除随机初态影响；15 秒段落级数据集用于增强 intro、breakdown、build-up、drop 等结构片段的学习信号。"
+                f"当前段落级数据集包含 {section15_clips} 条样本、{section15_sources} 个来源，结构分布为 {section15_summary}。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 15 秒段落级 LoRA 二次微调方案",
+            "headers": ["环节", "实施方式", "预期作用"],
+            "rows": [
+                ["片段构建", "按 intro、breakdown、build-up、drop 等结构切片", "让训练目标从整曲平均风格转向段落结构"],
+                ["样本均衡", "保留各结构标签计数和划分文件", "避免模型只学习高频出现的 drop 片段"],
+                ["继续训练", "从已有 LoRA bundle 初始化，更新末端 block、conditioning 与 final layer", "保留已有风格适配，同时加强 15 秒结构生成"],
+                ["同种子评估", "baseline、旧 LoRA、新 LoRA 三方对比", "判断提升来自二次微调而不是随机种子差异"],
+                ["水印输出", "生成完整 Mel 图谱并在末尾加入频谱水印", "让 AI 生成标识成为最终证据链的一部分"],
+            ],
+            "docx_widths": [1700, 4000, 3660],
+            "font_size": 8.7,
+        },
+        {"type": "figure", "path": figs["training"], "caption": "图 同 seed LoRA 与 baseline 的客观音频诊断。该图作为音乐生成路径的基线证据，与音色转换路径分开解释。"},
+        {"type": "figure", "path": figs["section15_watermark"], "caption": "图 段落级 LoRA 二次微调与 AI 水印 Mel 证据。右侧完整 Mel 图谱末尾显示由频谱能量构成的“AI生成”负形水印。"},
+        {"type": "h2", "text": "5.3 后处理、运行代价与误差来源"},
+        {
+            "type": "p",
+            "text": (
+                f"针对长音频任务，系统记录了输入时长约 {long_duration:.1f} 秒、扩散步数 {diffusion_steps}、CFG={cfg_rate:.2f}、"
+                f"去沙哑强度 {dehiss_strength:.2f}、情感保持 {emotion_strength:.2f} 和预计耗时约 {long_est_min:.1f} 分钟。"
+                "整曲转换更适合作为离线任务执行，交互式网页端则适合先用短片段筛选 pitch、CFG、扩散步数和后处理参数。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "后处理链路被拆成三个可解释步骤。第一，高频抑制与谱平滑减少声码器毛刺和分轨泄漏；"
+                "第二，包络匹配把源 vocals 的能量起伏传递到转换后人声，避免声线被压平；"
+                "第三，轻混响在转换人声和伴奏之间提供空间过渡，但混响量过大也会降低咬字清晰度。"
+            ),
+        },
+        {"type": "figure", "path": figs["quality_chain"], "caption": "图 去沙哑、情感力度保持与轻混响后处理链路。该链路用于抑制高频毛刺、保留演唱力度并改善人声融入伴奏的自然度。"},
+        {"type": "figure", "path": figs["runtime_budget"], "caption": "图 Seed-VC 长音频推理资源预算。图中区分短片段实测、整曲估计和离线任务策略。"},
+        {"type": "figure", "path": figs["error_analysis"], "caption": "图 音色转换异常来源分析。沙哑、跑调、耗时和音色不稳定分别映射到分轨、F0、声码器、参考样本和资源预算等可检查环节。"},
+        {"type": "h1", "text": "6 讨论"},
+        {
+            "type": "p",
+            "text": (
+                "本文系统的优点是模块边界明确、证据链完整，并且能把用户在网页端观察到的问题映射到具体技术环节。"
+                "如果输出声音沙哑，应先检查分轨泄漏和声码器高频伪影，再调节去沙哑强度；如果情感不足，应检查源 vocals 包络和 emotion_strength；"
+                "如果整曲任务耗时过长，应采用短片段参数筛选和整曲离线处理，而不是把耗时问题写成模型失败。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "局限性也需要明确。第一，当前音色相似性仍缺少大规模主观听评和统计显著性检验；"
+                "第二，Seed-VC 在长歌曲上的推理代价较高，适合离线复核而不是频繁交互式试错；"
+                "第三，目标音色样本的授权、质量和情绪匹配会显著影响最终结果；"
+                "第四，LoRA 音乐生成路径与歌声音色转换路径虽然在系统中并列呈现，但二者评价指标不同，不能用同一个分数概括。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 局限性与后续改进",
+            "headers": ["问题", "当前处理", "后续工作"],
+            "rows": [
+                ["音色相似性量化不足", "保留任务证据和客观声学指标", "增加目标音色相似度模型和人工听评"],
+                ["长音频推理较慢", "短片段筛参、整曲离线复核", "加入缓存、分段拼接和 GPU 推理部署"],
+                ["分轨泄漏影响转换", "保存 stems 并记录警告", "加入 vocals 能量阈值和分轨质量评分"],
+                ["授权与伦理约束", "以用户提供目标样本为条件", "加入授权确认、来源记录和水印检测流程"],
+            ],
+            "docx_widths": [2400, 3300, 3660],
+            "font_size": 8.8,
+        },
+        {"type": "h1", "text": "7 结论"},
+        {
+            "type": "p",
+            "text": (
+                "本文提出并实现了一个面向智能语音处理的音乐生成与授权歌声音色转换系统。"
+                "系统在音乐生成侧使用 ACE-Step 与 LoRA 完成目标 EDM 数据域适配，在歌声音色转换侧使用 Demucs 和 Seed-VC 完成人声分离、音色迁移和伴奏重混。"
+                "与单纯展示生成样例不同，本文强调任务级复现实验单元，保存输入、分轨、转换、后处理、重混、日志、指标和 Mel 水印图。"
+                "实验表明，该系统能够把音乐风格适配、授权音色转换和 AI 生成标识组织为一条可检查的工程链路，为后续加入主观听评、音色相似度度量和高性能推理部署提供基础。"
+            ),
+        },
+        {"type": "references", "items": refs},
+    ]
+
+
 def main() -> None:
     ensure_dirs()
     ctx = load_context()
     figs = make_figures(ctx)
-    blocks = normalize_caption_numbers(paper_blocks_v3(ctx, figs))
+    blocks = normalize_caption_numbers(paper_blocks_submission_final(ctx, figs))
     write_tex(blocks)
     write_docx(blocks)
     write_html(blocks)
