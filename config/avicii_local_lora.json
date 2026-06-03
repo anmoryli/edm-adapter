@@ -1,0 +1,22 @@
+{
+  "r": 8,
+  "lora_alpha": 16,
+  "target_modules": [
+    "to_q",
+    "to_k",
+    "to_v",
+    "to_out.0",
+    "cross_attn.to_q",
+    "cross_attn.to_k",
+    "cross_attn.to_v",
+    "cross_attn.add_q_proj",
+    "cross_attn.add_k_proj",
+    "cross_attn.add_v_proj",
+    "genre_embedder",
+    "speaker_embedder",
+    "t_block.1",
+    "final_layer.linear"
+  ],
+  "use_rslora": true,
+  "lora_dropout": 0.01
+}

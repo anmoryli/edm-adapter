@@ -1,0 +1,54 @@
+# Runtime caches
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and secrets
+.env
+.env.*
+*.log
+logs/
+
+# Node/runtime dependencies
+node_modules/
+
+# Datasets, model weights, generated outputs
+dataset/
+models/
+outputs/
+external_tools/
+ACE-Step/
+1761704195865-bk9wgc-tomori1_e12_s2664/
+
+# Large binary assets generated or downloaded locally
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.mp4
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+
+# Report render intermediates
+report/intelligent_speech_processing_paper/rendered*/
+report/intelligent_speech_processing_paper/__pycache__/
+report/**/__pycache__/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp

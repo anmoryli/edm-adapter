@@ -1,0 +1,28 @@
+# Training dependencies for EDM-StructLoRA / ACE-Step.
+# Install on the GPU machine with:
+#   pip install -r requirements-train.txt
+
+-r requirements.txt
+
+peft>=0.19.0
+datasets>=3.0.0
+pytorch-lightning>=2.0.0
+tensorboard>=2.14.0
+tensorboardX>=2.6.0
+transformers>=4.30.0
+diffusers>=0.33.0
+accelerate>=0.20.0
+
+# ACE-Step tokenizer / language-segmentation dependencies.
+py3langid>=0.2.0
+pypinyin>=0.50.0
+hangul-romanize>=0.1.0
+num2words>=0.5.0
+spacy>=3.5.0
+fugashi
+unidic-lite
+
+# Optional Japanese romanization dependency used by upstream ACE-Step.
+# On Windows/Python 3.13 this may require a compiler because of mojimoji.
+# Install on Linux GPU environments if needed:
+#   pip install cutlet "fugashi[unidic-lite]"

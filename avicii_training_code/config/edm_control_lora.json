@@ -1,0 +1,57 @@
+{
+  "method": "edm_control_lora_v1",
+  "base_model": "ACE-Step-v1-3.5B",
+  "shared_lora": {
+    "r": 32,
+    "lora_alpha": 16,
+    "target_modules": [
+      "linear_q",
+      "linear_k",
+      "linear_v",
+      "to_q",
+      "to_k",
+      "to_v",
+      "to_out.0"
+    ],
+    "use_rslora": true
+  },
+  "expert_lora": {
+    "r": 8,
+    "lora_alpha": 8,
+    "target_modules": [
+      "linear_q",
+      "linear_k",
+      "linear_v",
+      "to_q",
+      "to_k",
+      "to_v",
+      "to_out.0"
+    ],
+    "use_rslora": true
+  },
+  "router": {
+    "shared_adapter": "edm_shared",
+    "section_scale": 0.9,
+    "energy_scale": 0.35,
+    "subgenre_scale": 0.45,
+    "bpm_scale": 0.2,
+    "normalize": false
+  },
+  "control_conditioner": {
+    "enabled": true,
+    "feature_dim": 36,
+    "text_embed_dim": 768,
+    "token_count": 8,
+    "hidden_dim": 512,
+    "dropout": 0.05
+  },
+  "training": {
+    "use_cached_latents": true,
+    "disable_ssl_loss_by_default": true,
+    "weighted_sampling": true,
+    "recommended_precision": "bf16-mixed",
+    "recommended_batch_size": 1,
+    "recommended_accumulate_grad_batches": 8,
+    "recommended_learning_rate": 0.0001
+  }
+}

@@ -1,0 +1,15 @@
+{
+    "r": 32,
+    "lora_alpha": 8,
+    "target_modules": [
+        "linear_q",
+        "linear_k",
+        "linear_v",
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0"
+    ],
+    "use_rslora": true,
+    "lora_dropout": 0.05
+}
