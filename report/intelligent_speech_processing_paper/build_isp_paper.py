@@ -905,33 +905,70 @@ def add_figure(doc, path, caption):
     )
 
 
-def render_formula_image(latex: str, fallback: str) -> Path:
-    image_path = ASSET_DIR / f"formula_{hashlib.sha1((latex or fallback).encode('utf-8')).hexdigest()[:10]}.png"
-    if image_path.exists():
-        return image_path
-    fig = plt.figure(figsize=(7.0, 0.65))
-    fig.patch.set_alpha(0)
-    try:
-        fig.text(0.5, 0.5, f"${latex}$", ha="center", va="center", fontsize=16)
-        fig.savefig(image_path, dpi=220, bbox_inches="tight", pad_inches=0.08, transparent=True)
-    except Exception:
-        plt.close(fig)
-        fig = plt.figure(figsize=(7.0, 0.65))
-        fig.patch.set_alpha(0)
-        fig.text(0.5, 0.5, fallback, ha="center", va="center", fontsize=15, family="Times New Roman")
-        fig.savefig(image_path, dpi=220, bbox_inches="tight", pad_inches=0.08, transparent=True)
-    finally:
-        plt.close(fig)
-    return image_path
+def formula_display_text(block) -> str:
+    text = str(block.get("docx_text") or block.get("text") or "")
+    replacements = {
+        "Delta p": "Δp",
+        "Delta": "Δ",
+        "*": "·",
+        "F0": "F0",
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+
+def add_math_run(paragraph_obj, text: str, *, italic: bool = False, subscript: bool = False) -> None:
+    run = paragraph_obj.add_run(text)
+    set_run_font(run, size=11.5, bold=False)
+    run.italic = italic
+    run.font.subscript = subscript
 
 
 def add_formula(doc, block):
-    path = render_formula_image(block.get("docx_latex") or block.get("latex", ""), block["text"])
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_before = Pt(4)
-    p.paragraph_format.space_after = Pt(4)
-    p.add_run().add_picture(str(path), width=Inches(4.8))
+    p.paragraph_format.first_line_indent = None
+    p.paragraph_format.line_spacing = 1.0
+    p.paragraph_format.space_before = Pt(5)
+    p.paragraph_format.space_after = Pt(5)
+    p.paragraph_format.keep_together = True
+    text = formula_display_text(block)
+    compact = text.replace(" ", "")
+    if compact.startswith("y_vc=Vocoder(SeedVC("):
+        add_math_run(p, "y", italic=True)
+        add_math_run(p, "vc", italic=True, subscript=True)
+        add_math_run(p, " = Vocoder(SeedVC(")
+        add_math_run(p, "C", italic=True)
+        add_math_run(p, "(")
+        add_math_run(p, "x", italic=True)
+        add_math_run(p, "), ")
+        add_math_run(p, "F", italic=True)
+        add_math_run(p, "0", italic=True, subscript=True)
+        add_math_run(p, "(")
+        add_math_run(p, "x", italic=True)
+        add_math_run(p, ") + Δ")
+        add_math_run(p, "p", italic=True)
+        add_math_run(p, ", ")
+        add_math_run(p, "e", italic=True)
+        add_math_run(p, "(")
+        add_math_run(p, "r", italic=True)
+        add_math_run(p, ")))")
+        return
+    if compact.startswith("y_mix=Normalize("):
+        add_math_run(p, "y", italic=True)
+        add_math_run(p, "mix", italic=True, subscript=True)
+        add_math_run(p, " = Normalize(")
+        add_math_run(p, "y", italic=True)
+        add_math_run(p, "vc", italic=True, subscript=True)
+        add_math_run(p, " + ")
+        add_math_run(p, "g", italic=True)
+        add_math_run(p, "v", italic=True, subscript=True)
+        add_math_run(p, " · ")
+        add_math_run(p, "a", italic=True)
+        add_math_run(p, ")")
+        return
+    add_math_run(p, text, italic=True)
 
 
 def write_docx(blocks) -> None:
@@ -1033,7 +1070,7 @@ def write_html(blocks) -> None:
         elif t == "p":
             parts.append(f"<p>{html_escape(block['text'])}</p>")
         elif t == "formula":
-            parts.append(f"<div class=\"formula\">{html_escape(block['text'])}</div>")
+            parts.append(f"<div class=\"formula\">{html_escape(formula_display_text(block))}</div>")
         elif t == "page_break":
             parts.append("<div style=\"page-break-after:always\"></div>")
         elif t == "figure":
