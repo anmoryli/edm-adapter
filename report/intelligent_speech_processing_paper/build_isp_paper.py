@@ -988,6 +988,24 @@ def add_formula(doc, block):
         add_math_run(p, " · ")
         add_math_run(p, "A", italic=True)
         return
+    if compact.startswith("h'=W0h+"):
+        add_math_run(p, "h", italic=True)
+        add_math_run(p, "′")
+        add_math_run(p, " = ")
+        add_math_run(p, "W", italic=True)
+        add_math_run(p, "0", subscript=True)
+        add_math_run(p, "h", italic=True)
+        add_math_run(p, " + ")
+        add_math_run(p, "α")
+        add_math_run(p, "/")
+        add_math_run(p, "r", italic=True)
+        add_math_run(p, " · ")
+        add_math_run(p, "B", italic=True)
+        add_math_run(p, "(")
+        add_math_run(p, "A", italic=True)
+        add_math_run(p, "h", italic=True)
+        add_math_run(p, ")")
+        return
     add_math_run(p, text, italic=True)
 
 
@@ -3290,7 +3308,9 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
     figures = {
         "system": ASSET_DIR / "fig1_cn_system_architecture.png",
         "task_model": ASSET_DIR / "fig2_cn_isp_task_definition.png",
+        "lora_principle": ASSET_DIR / "fig3_cn_lora_principle.png",
         "lora": ASSET_DIR / "fig3_cn_lora_scope.png",
+        "svc_principle": ASSET_DIR / "fig4_cn_svc_disentanglement.png",
         "vc_pipeline": ASSET_DIR / "fig4_cn_voice_conversion_pipeline.png",
         "stem_evidence": ASSET_DIR / "fig5_cn_stem_remix_evidence.png",
         "vc_evidence": ASSET_DIR / "fig6_cn_waveform_spectrum_metrics.png",
@@ -3418,6 +3438,36 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
     fig.savefig(figures["task_model"], bbox_inches="tight")
     plt.close(fig)
 
+    # 图3：LoRA 低秩残差注入原理
+    fig, ax = plt.subplots(figsize=(7.4, 4.0))
+    clean(ax)
+    ax.text(0.02, 0.95, "LoRA 的低秩残差注入原理", fontsize=11, weight="bold", ha="left", fontproperties=cn_font)
+    box(ax, 0.04, 0.58, 0.13, 0.12, "层输入\n隐藏状态 h", palette["light_gray"], fs=8.1)
+    box(ax, 0.26, 0.72, 0.18, 0.12, "冻结主干权重\nW0 h", palette["light_gray"], fs=8.1)
+    box(ax, 0.26, 0.34, 0.13, 0.12, "降维矩阵\nA", palette["light_blue"], fs=8.2, weight="bold")
+    box(ax, 0.45, 0.34, 0.13, 0.12, "低秩瓶颈\nr << d", palette["white"], fs=8.0)
+    box(ax, 0.64, 0.34, 0.13, 0.12, "升维矩阵\nB", palette["light_blue"], fs=8.2, weight="bold")
+    box(ax, 0.80, 0.34, 0.12, 0.12, "缩放系数\nalpha/r", palette["light_orange"], fs=7.5)
+    box(ax, 0.64, 0.62, 0.13, 0.12, "残差相加\n+", palette["white"], fs=11, weight="bold")
+    box(ax, 0.83, 0.62, 0.12, 0.12, "层输出\nh'", palette["light_green"], fs=8.1, weight="bold")
+    for start, end, color in [
+        ((0.17, 0.64), (0.26, 0.78), palette["gray"]),
+        ((0.17, 0.64), (0.26, 0.40), palette["blue"]),
+        ((0.44, 0.78), (0.64, 0.68), palette["gray"]),
+        ((0.39, 0.40), (0.45, 0.40), palette["blue"]),
+        ((0.58, 0.40), (0.64, 0.40), palette["blue"]),
+        ((0.77, 0.40), (0.80, 0.40), palette["blue"]),
+        ((0.86, 0.46), (0.70, 0.62), palette["orange"]),
+        ((0.77, 0.68), (0.83, 0.68), palette["green"]),
+    ]:
+        arrow(ax, start, end, color=color, lw=1.0)
+    ax.text(0.06, 0.18, "核心思想：冻结 W0，只训练 A 和 B。全量线性层约需 d×d 个更新参数；LoRA 分支约需 d×r + r×d 个参数。",
+            fontsize=8.4, color="#374151", fontproperties=cn_font)
+    ax.text(0.06, 0.10, "在音乐扩散模型中，该残差分支改变去噪网络的条件响应和噪声预测轨迹，而不重写基础模型主体能力。",
+            fontsize=8.4, color="#374151", fontproperties=cn_font)
+    fig.savefig(figures["lora_principle"], bbox_inches="tight")
+    plt.close(fig)
+
     # 图3：LoRA 参数范围
     stats = ctx.dataset_stats
     manifest = ctx.manifest
@@ -3456,6 +3506,50 @@ def make_figures(ctx: PaperContext) -> dict[str, Path]:
         ax2.text(v * 1.15, y, f"{v:g}M", va="center", fontsize=8, fontproperties=cn_font)
     apply_font(ax2)
     fig.savefig(figures["lora"], bbox_inches="tight")
+    plt.close(fig)
+
+    # 图4：歌声音色转换的解耦建模原理
+    fig, ax = plt.subplots(figsize=(7.4, 4.25))
+    clean(ax)
+    ax.text(0.02, 0.95, "歌声音色转换的内容-基频-音色解耦原理", fontsize=11, weight="bold", ha="left", fontproperties=cn_font)
+    box(ax, 0.04, 0.66, 0.14, 0.11, "源歌曲 x", palette["light_blue"], fs=8.4, weight="bold")
+    box(ax, 0.22, 0.66, 0.16, 0.11, "Demucs 分轨\n人声 / 伴奏", palette["light_orange"], fs=8.0)
+    box(ax, 0.44, 0.77, 0.16, 0.10, "内容表征\n歌词与时序", palette["white"], fs=8.0)
+    box(ax, 0.44, 0.61, 0.16, 0.10, "基频轨迹\n旋律与转调", palette["white"], fs=8.0)
+    box(ax, 0.44, 0.45, 0.16, 0.10, "能量包络\n情绪力度", palette["white"], fs=8.0)
+    box(ax, 0.04, 0.25, 0.14, 0.11, "目标参考 r", palette["light_green"], fs=8.4, weight="bold")
+    box(ax, 0.22, 0.25, 0.16, 0.11, "音色编码器\n目标声学身份", palette["light_green"], fs=8.0)
+    box(ax, 0.66, 0.58, 0.13, 0.13, "Seed-VC\n条件转换", palette["light_green"], fs=8.2, weight="bold")
+    box(ax, 0.83, 0.58, 0.12, 0.13, "声码器\n目标人声", palette["light_blue"], fs=8.2)
+    box(ax, 0.66, 0.28, 0.13, 0.11, "后处理\n去沙/包络/混响", palette["light_orange"], fs=7.7)
+    box(ax, 0.83, 0.28, 0.12, 0.11, "与伴奏重混\n完整歌曲", palette["white"], fs=7.7)
+    for start, end, color in [
+        ((0.18, 0.715), (0.22, 0.715), palette["blue"]),
+        ((0.38, 0.715), (0.44, 0.82), palette["green"]),
+        ((0.38, 0.715), (0.44, 0.66), palette["green"]),
+        ((0.38, 0.715), (0.44, 0.50), palette["green"]),
+        ((0.60, 0.82), (0.66, 0.65), palette["green"]),
+        ((0.60, 0.66), (0.66, 0.65), palette["green"]),
+        ((0.60, 0.50), (0.66, 0.65), palette["green"]),
+        ((0.18, 0.305), (0.22, 0.305), palette["green"]),
+        ((0.79, 0.645), (0.83, 0.645), palette["blue"]),
+        ((0.89, 0.58), (0.73, 0.39), palette["orange"]),
+        ((0.79, 0.335), (0.83, 0.335), palette["orange"]),
+    ]:
+        arrow(ax, start, end, color=color, lw=1.0)
+    ax.plot([0.38, 0.62, 0.62], [0.305, 0.305, 0.61],
+            color=palette["green"], linewidth=1.0)
+    ax.annotate("", xy=(0.66, 0.61), xytext=(0.62, 0.61),
+                arrowprops=dict(arrowstyle="-|>", color=palette["green"], lw=1.0))
+    ax.plot([0.30, 0.40, 0.40, 0.89], [0.66, 0.66, 0.19, 0.19],
+            color=palette["gray"], linewidth=1.0)
+    ax.annotate("", xy=(0.89, 0.28), xytext=(0.89, 0.19),
+                arrowprops=dict(arrowstyle="-|>", color=palette["gray"], lw=1.0))
+    ax.text(0.38, 0.17, "伴奏旁路：不进入转换器", fontsize=7.5,
+            color="#4B5563", fontproperties=cn_font)
+    ax.text(0.05, 0.10, "解释：源人声提供“唱什么、怎么唱、音高怎么走”，目标参考只提供“像谁唱”。伴奏不进入音色转换器，只在最后参与重混。",
+            fontsize=8.3, color="#374151", fontproperties=cn_font)
+    fig.savefig(figures["svc_principle"], bbox_inches="tight")
     plt.close(fig)
 
     # 图4：音色转换流水线
@@ -3894,6 +3988,7 @@ def paper_blocks_v3(ctx: PaperContext, figs: dict[str, Path]):
         "Ho J, Jain A, Abbeel P. Denoising Diffusion Probabilistic Models[C]//Advances in Neural Information Processing Systems. 2020.",
         "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
         "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Qian K, Zhang Y, Chang S, Yang X, Hasegawa-Johnson M. AutoVC: Zero-Shot Voice Style Transfer with Only Autoencoder Loss[C]//International Conference on Machine Learning. 2019.",
         "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
         "Plachtaa. Seed-VC: zero-shot singing voice conversion toolkit[EB/OL]. GitHub repository, local clone: external_tools/seed-vc.",
         "Kong J, Kim J, Bae J. HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis[C]//Advances in Neural Information Processing Systems. 2020.",
@@ -4399,6 +4494,7 @@ def paper_blocks_submission(ctx: PaperContext, figs: dict[str, Path]):
         "Copet J, Kreuk F, Gat I, et al. Simple and Controllable Music Generation[C]//Advances in Neural Information Processing Systems. 2023.",
         "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
         "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Qian K, Zhang Y, Chang S, Yang X, Hasegawa-Johnson M. AutoVC: Zero-Shot Voice Style Transfer with Only Autoencoder Loss[C]//International Conference on Machine Learning. 2019.",
         "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
         "Plachtaa. Seed-VC: zero-shot singing voice conversion toolkit[EB/OL]. GitHub repository.",
         "Lee S, Ping W, Ginsburg B, Catanzaro B, Yoon S. BigVGAN: A Universal Neural Vocoder with Large-Scale Training[C]//International Conference on Learning Representations. 2023.",
@@ -4798,6 +4894,7 @@ def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
         "Copet J, Kreuk F, Gat I, et al. Simple and Controllable Music Generation[C]//Advances in Neural Information Processing Systems. 2023.",
         "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
         "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Qian K, Zhang Y, Chang S, Yang X, Hasegawa-Johnson M. AutoVC: Zero-Shot Voice Style Transfer with Only Autoencoder Loss[C]//International Conference on Machine Learning. 2019.",
         "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
         "Plachtaa. Seed-VC: zero-shot singing voice conversion toolkit[EB/OL]. GitHub repository.",
         "Lee S, Ping W, Ginsburg B, Catanzaro B, Yoon S. BigVGAN: A Universal Neural Vocoder with Large-Scale Training[C]//International Conference on Learning Representations. 2023.",
@@ -4855,9 +4952,10 @@ def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
             "type": "p",
             "text": (
                 "本文主要贡献包括：1）设计音乐生成与授权歌声音色转换的双路径系统架构，避免 LoRA 风格适配与 Seed-VC 音色迁移相互混淆；"
-                "2）给出歌声音色转换的形式化定义和工程实现链路，包括 Demucs 分轨、Seed-VC 转换、去沙哑、包络保持、轻混响和伴奏重混；"
-                "3）建立实验级证据链，将输入音频、分轨、转换、重混、参数和诊断图组织为最小复现实验单元；"
-                "4）在最终生成音频的完整 Mel 图谱末尾加入由频谱能量构成的“AI生成”负形水印，用于标识 AI 生成结果。"
+                "2）从低秩残差注入和内容-基频-音色解耦两个层面解释核心原理，并给出对应科研图和形式化表达；"
+                "3）给出歌声音色转换的工程实现链路，包括 Demucs 分轨、Seed-VC 转换、去沙哑、包络保持、轻混响和伴奏重混；"
+                "4）建立实验级证据链，将输入音频、分轨、转换、重混、参数和诊断图组织为最小复现实验单元；"
+                "5）在最终生成音频的完整 Mel 图谱末尾加入由频谱能量构成的“AI生成”负形水印，用于标识 AI 生成结果。"
             ),
         },
         {"type": "figure", "path": figs["system"], "caption": "图 系统总体架构。系统将文本到音乐生成、授权歌声音色转换和实验级证据记录组织为三个相互独立但可追踪的模块。"},
@@ -4948,16 +5046,42 @@ def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
         {
             "type": "p",
             "text": (
+                "LoRA 的核心不是重新训练基础模型，而是在已有线性映射旁加入一个低秩残差分支。"
+                "对 Transformer 中的线性投影而言，若直接微调整个权重矩阵，更新量与矩阵规模同阶，既增加显存和存储成本，也容易让基础模型已有能力发生漂移。"
+                "LoRA 假设面向特定任务的数据域偏移具有较低的内在秩，因此把更新矩阵分解为两个小矩阵：先把隐藏状态投影到低维瓶颈，再投影回原维度，并用缩放系数控制残差强度。"
+            ),
+        },
+        {
+            "type": "formula",
+            "text": "h' = W0 h + alpha/r · B(Ah)",
+            "latex": r"h'=W_0h+\frac{\alpha}{r}B(Ah)",
+        },
+        {
+            "type": "p",
+            "text": (
+                "式中，基础权重保持冻结，只有低秩矩阵 A 和 B 参与训练；r 表示瓶颈秩，α 表示适配强度。"
+                "当隐藏维度为 d 且 r 远小于 d 时，新增可训练参数从全量更新的平方级降为近似线性级。"
+                "因此，LoRA 更适合在保留 ACE-Step 通用音乐生成能力的前提下学习 EDM 数据域的局部偏移。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "在扩散式音乐生成中，LoRA 的作用位置可以理解为去噪网络内部的条件响应校正。"
+                "基础模型已经具备从文本、歌词、时长和随机噪声生成音乐潜变量的能力；LoRA 分支只在若干线性投影处加入小幅残差，"
+                "使网络在相同步数和相同随机种子下更倾向于目标数据域的鼓组密度、低频能量、合成器织体和段落推进方式。"
+                "这也是本文必须使用同 seed baseline 的原因：只有固定采样初态和推理参数，才能把可听差异归因到低秩适配，而不是归因到随机采样。"
+            ),
+        },
+        {"type": "figure", "path": figs["lora_principle"], "caption": "图 LoRA 低秩残差注入原理。基础权重保持冻结，低秩矩阵 A 和 B 构成可训练残差分支，并通过缩放系数控制适配强度。"},
+        {
+            "type": "p",
+            "text": (
                 f"音乐生成路径以 ACE-Step 为基础模型，训练数据包含 {total} 条 8 秒 EDM 片段，划分为训练/验证/测试={train}/{val}/{test}。"
                 f"系统从已有 LoRA 适配器的第 {init_step} 步继续训练 {local_step} 步，到第 {global_step} 步；"
                 f"可训练范围覆盖最后 {train_last_n_blocks} 个 Transformer block，参数量约 {trainable_params}。"
                 "这种设置保留 MusicDCAE、文本编码器和大部分扩散主干的通用能力，只让末端去噪决策层学习目标 EDM 数据域的节奏、低频、合成器音色和混音偏移。"
             ),
-        },
-        {
-            "type": "formula",
-            "text": "W' = W + DeltaW, DeltaW = alpha/r · B · A",
-            "latex": r"W'=W+\Delta W,\quad \Delta W=\frac{\alpha}{r}BA",
         },
         {
             "type": "p",
@@ -4983,6 +5107,25 @@ def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
             "font_size": 8.8,
         },
         {"type": "h2", "text": "3.2 授权歌声音色转换链路"},
+        {
+            "type": "p",
+            "text": (
+                "歌声音色转换的基本原理是把源人声中的歌唱内容、基频轨迹和情绪力度，与目标参考样本中的音色身份分开建模。"
+                "源人声决定歌词时序、咬字节奏、旋律走向和能量包络；目标参考样本只提供声学音色身份。"
+                "如果把整首歌直接输入转换器，鼓、贝斯和合成器残留会被错误解释为人声内容，导致沙哑、金属感或伴奏被染色。"
+                "因此，本文先用声源分离获得人声分轨，再对人声做条件转换，最后把转换后人声重新混回伴奏。"
+            ),
+        },
+        {"type": "figure", "path": figs["svc_principle"], "caption": "图 歌声音色转换的解耦建模原理。源人声提供内容、基频和能量包络，目标参考样本提供音色嵌入，声码器重建目标音色人声后再与伴奏重混。"},
+        {
+            "type": "p",
+            "text": (
+                "其中，内容表征 C(x) 主要对应歌词音素、咬字边界和时序结构；F0 轨迹决定旋律高度与转调后的音高走向；"
+                "能量包络反映演唱力度、句尾收束和情绪起伏；目标音色嵌入 e(r) 则描述参考样本的声道形态、共振峰分布和声学身份。"
+                "转换器需要在这些因素之间做条件生成：既不能丢掉源人声的旋律和情绪，也不能把伴奏中的鼓、贝斯和合成器误当成人声内容。"
+                "因此，分轨、去沙哑、包络保持、轻混响和最终重混不是附属步骤，而是保证转换结果可听、可解释和可复现的必要环节。"
+            ),
+        },
         {
             "type": "p",
             "text": (
