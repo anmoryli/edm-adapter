@@ -4497,7 +4497,7 @@ if __name__ == "__main__":
     demo.launch(
         server_name=os.environ.get("EDM_GRADIO_HOST", "127.0.0.1"),
         server_port=int(os.environ.get("EDM_GRADIO_PORT", "7860")),
-        share=False,
+        share=True,
         inbrowser=False,
         show_error=True,
         enable_monitoring=False,
