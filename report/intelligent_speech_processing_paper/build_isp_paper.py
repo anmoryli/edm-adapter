@@ -5346,11 +5346,271 @@ def paper_blocks_submission_final(ctx: PaperContext, figs: dict[str, Path]):
     ]
 
 
+def paper_blocks_academic_revision(ctx: PaperContext, figs: dict[str, Path]):
+    """Academic revision focused on background, significance, related work, and technical exposition."""
+
+    blocks = paper_blocks_submission_final(ctx, figs)
+
+    stats = ctx.dataset_stats or {}
+    split = stats.get("split_counts") or stats.get("split") or {}
+    total = int(stats.get("total_clips", stats.get("clips", 6016)) or 6016)
+    train = int(split.get("train", 4833) or 4833)
+    val = int(split.get("val", 557) or 557)
+    test = int(split.get("test", 626) or 626)
+
+    section15_report = read_json(ROOT / "outputs" / "datasets" / "avicii_section15_v2" / "reports" / "build_report.json", {})
+    section_counts = section15_report.get("section_counts") or {}
+    section15_clips = int(section15_report.get("clips", 360) or 360)
+    section15_sources = int(section15_report.get("sources", 142) or 142)
+    section15_summary = (
+        f"drop={section_counts.get('drop', 130)}, breakdown={section_counts.get('breakdown', 86)}, "
+        f"build-up={section_counts.get('build-up', 65)}, intro={section_counts.get('intro', 36)}, "
+        f"loop={section_counts.get('loop', 25)}, outro={section_counts.get('outro', 18)}"
+    )
+
+    voice = _latest_voice_conversion_record()
+    task = voice.get("task", {}) if isinstance(voice.get("task", {}), dict) else {}
+    mix_path = Path(voice.get("mix", Path()))
+    duration, sr = _audio_info(mix_path) if mix_path.exists() else (0.0, 0)
+    metrics = _parse_voice_metrics(task.get("analysis", ""))
+    task_dir = Path(voice.get("task_dir", Path()))
+    rtf = _parse_rtf(task_dir) if task_dir.exists() else None
+    rtf_text = f"{rtf:.2f}" if rtf else "未记录"
+
+    blocks[0] = {
+        "type": "title",
+        "cn": "面向智能语音处理的生成式音乐建模与授权歌声音色迁移研究",
+        "en": "Generative Music Modeling and Authorized Singing-Voice Timbre Transfer for Intelligent Speech Processing",
+    }
+    blocks[1] = {
+        "type": "abstract",
+        "cn": (
+            "随着深度生成模型从语音识别、语音增强和语音合成扩展到音乐生成、歌声音色迁移和多轨音频编辑，智能语音处理的研究对象正在由单一语音信号转向包含旋律、节奏、音色、结构和混音关系的复杂音频对象。"
+            "针对文本到音乐生成难以在低资源条件下稳定适配目标风格、歌声音色转换容易混入伴奏泄漏和后处理伪影、实验结果缺乏可复核证据链等问题，本文提出一种面向智能语音处理的双路径生成式音频建模方法。"
+            "在音乐生成路径中，系统以 ACE-Step 为基础模型，采用 LoRA 对目标 EDM 数据域进行参数高效适配，并通过同 seed baseline 控制随机采样因素；在授权歌声音色迁移路径中，系统以 Demucs 完成人声与伴奏分离，以 Seed-VC 完成零样本歌声音色迁移，并在转换后执行去沙哑、能量包络保持、轻混响和伴奏重混。"
+            "为提升论文实验的可验证性，本文将输入音频、分离音轨、转换人声、重混结果、参数记录、日志、波形频谱诊断图和完整 Mel 水印图组织为统一实验记录单元。"
+            f"实验数据包含 {total} 条 8 秒 EDM 片段，训练/验证/测试划分为 {train}/{val}/{test}；另构建 {section15_clips} 条 15 秒段落级增强片段，覆盖 {section15_summary} 等结构标签。"
+            f"授权音色迁移实验以匿名样例 E-VC-01 验证端到端链路，输出时长 {duration:.1f} 秒，采样率 {sr} Hz，BPM={metrics.get('bpm', 0):.1f}，RMS={metrics.get('rms', 0):.4f}，低频比例={metrics.get('low_freq', 0):.4f}，Seed-VC 运行代价 RTF={rtf_text}。"
+            "结果表明，该方法能够把目标风格适配、歌声音色迁移、分轨重混和 AI 生成标识纳入可追踪、可复核的智能音频处理流程。"
+        ),
+        "en": (
+            "This paper studies generative music modeling and authorized singing-voice timbre transfer for intelligent speech processing. "
+            "The proposed dual-path framework adapts ACE-Step to an EDM domain with LoRA while separating style adaptation from singing-voice timbre transfer. "
+            "The conversion path combines Demucs source separation, Seed-VC zero-shot singing-voice conversion, artifact suppression, dynamics preservation, light reverb, and accompaniment remixing. "
+            "The system further records experiment-level evidence, including stems, converted vocals, remix outputs, parameter logs, waveform diagnostics, and full Mel-spectrogram watermark figures. "
+            "Experiments on short clips, section-level clips, and an authorized conversion case show that the framework provides a reproducible basis for analyzing controllable music generation and singing-voice timbre migration."
+        ),
+        "keywords": "智能语音处理；生成式音乐建模；授权歌声音色迁移；ACE-Step；LoRA；Demucs；Seed-VC；分轨重混；可复现实验",
+    }
+
+    intro_blocks = [
+        {"type": "h1", "text": "1 引言"},
+        {"type": "h2", "text": "1.1 研究背景"},
+        {
+            "type": "p",
+            "text": (
+                "智能语音处理长期关注语音识别、语音增强、说话人识别和文本到语音合成等任务，其核心目标是让机器能够理解、生成和改善人类语音。"
+                "近年来，音乐生成、歌声音色迁移、音源分离和跨模态音频编辑逐渐进入同一技术体系：这些任务同样依赖声学表征、时序建模、音色编码、基频估计、声码器重建和主客观质量评价，但处理对象从短时语音扩展为包含和声、节奏、段落结构和混音空间的复杂音频。"
+                "因此，面向音乐和歌声的智能处理不只是应用场景扩展，而是对传统语音处理中的内容表征、说话人或歌手身份表征、韵律建模和可控生成能力提出了更高要求。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "文本到音乐生成模型能够根据提示词和歌词生成较长音频，但基础模型输出通常反映训练集中宽泛的音乐先验，难以在有限样本和有限算力条件下稳定学习特定 EDM 数据域中的段落推进、合成器音色、低频律动和混音习惯。"
+                "另一方面，歌声音色迁移要求保留源歌曲的歌词时序、旋律走向和演唱力度，同时只改变授权目标样本提供的音色身份；如果直接把整首混音送入转换模型，伴奏泄漏、分轨误差和声码器伪影会同时进入结果，使问题难以定位。"
+                "本文将这两类能力拆分为生成适配路径和授权音色迁移路径，目的在于让风格学习、旋律内容、歌手音色和后处理质量分别形成可解释变量。"
+            ),
+        },
+        {"type": "h2", "text": "1.2 研究意义"},
+        {
+            "type": "p",
+            "text": (
+                "从理论意义看，本文把生成式音乐建模与歌声音色迁移纳入智能语音处理框架，强调内容、基频、音色、能量包络和混音背景之间的解耦关系。"
+                "这种建模视角有助于解释为什么同一段音频中“旋律清楚但音色不像”“瞬时音色接近但段落结构发散”“人声清晰但伴奏模糊”等现象不能简单归因于单一模型能力，而应从训练数据粒度、模型适配位置、分轨质量、F0 稳定性和后处理链路共同分析。"
+                "因此，本文不仅给出系统实现，也将实验变量拆解为可复核的研究对象。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "从工程意义看，本文面向本地化可运行系统设计了低资源微调、网页任务队列、音轨分离、零样本音色迁移、重混输出和证据归档流程。"
+                "该流程降低了从研究模型到可交互原型之间的落地成本，也避免仅凭单个听感样例判断模型好坏。"
+                "从应用和治理意义看，本文坚持授权目标音色样本作为转换条件，并在最终 Mel 图谱中加入 AI 生成水印，使生成音频的来源、参数和可追踪记录能够进入系统设计本身。"
+            ),
+        },
+        {"type": "h2", "text": "1.3 研究内容与创新点"},
+        {
+            "type": "p",
+            "text": (
+                "本文围绕 EDM-Adapter 原型系统展开研究，主要内容包括：第一，构建 ACE-Step 与 LoRA 结合的音乐生成路径，用低秩残差注入方式在有限算力下完成目标数据域适配；"
+                "第二，构建 Demucs 与 Seed-VC 结合的授权歌声音色迁移路径，显式分离源歌曲内容、基频轨迹、目标音色嵌入和伴奏重混；"
+                "第三，建立同 seed 生成对照、段落级数据增强和任务级证据链，使每次实验都能回溯到输入、参数、模型权重、分轨结果和诊断图；"
+                "第四，针对 AI 生成内容标识设计 Mel 频谱水印，把生成结果的可标识性纳入音频处理链路。"
+            ),
+        },
+    ]
+    blocks[2:6] = intro_blocks
+
+    for block in blocks:
+        if block.get("type") == "h1" and str(block.get("text", "")).startswith("2 "):
+            block["text"] = "2 国内外研究现状与问题定义"
+            break
+
+    related_idx = next(
+        i for i, block in enumerate(blocks) if block.get("type") == "h1" and str(block.get("text", "")).startswith("2 ")
+    )
+    related_insert = [
+        {"type": "h2", "text": "2.1 国外研究现状"},
+        {
+            "type": "p",
+            "text": (
+                "国外生成式音频研究大致经历了从谱图生成、离散音频 token 建模到潜变量扩散和大规模音乐基础模型的发展过程。"
+                "MusicLM 将文本条件音乐生成表述为分层序列建模问题，强调长时一致性和文本语义对齐；MusicGen 使用压缩离散音乐表示和单阶段语言模型提升可控生成效率；AudioLDM 系列则把潜变量扩散引入通用音频、音乐和声效生成，使文本条件和自监督音频表征成为统一建模基础。"
+                "ACE-Step 进一步面向音乐生成基础模型组织文本、歌词、声学潜变量和扩散式采样流程，为本地 LoRA 适配提供了可复用底座。"
+            ),
+        },
+        {
+            "type": "p",
+            "text": (
+                "在参数高效微调方面，LoRA 通过冻结基础权重并训练低秩增量矩阵，降低了大模型风格适配的显存和存储开销。"
+                "在音源分离方面，Demucs 类模型结合波形域和谱图域建模，为从混音歌曲中提取人声、鼓、贝斯和其他伴奏声部提供了工程基础。"
+                "在语音与歌声音色转换方面，AutoVC 等零样本转换方法强调内容瓶颈和说话人嵌入解耦，Seed-VC 等开源工具进一步把这种思路扩展到实时语音转换和歌声音色转换。"
+                "总体来看，国外研究更强调基础模型规模、跨模态条件控制和开放式生成能力，但在小样本目标风格适配、授权音色治理和实验证据链方面仍需要具体系统补足。"
+            ),
+        },
+        {"type": "h2", "text": "2.2 国内研究现状"},
+        {
+            "type": "p",
+            "text": (
+                "国内相关研究和应用主要呈现三类特点。"
+                "第一，围绕开源大模型、LoRA 适配和本地推理形成了较活跃的工程实践，研究者更关注在消费级显卡上完成微调、推理加速和网页化交互。"
+                "第二，音乐理解、音频表征学习、歌声合成和声码器重建等方向持续积累组件能力，但这些组件在完整音乐生成和歌声音色迁移系统中常被割裂使用。"
+                "第三，国内应用场景更重视中文用户交互、作品授权、生成内容标识和可复现实验报告，但公开数据集标注、主观听评协议和跨系统指标对齐仍不充分。"
+                "因此，本文更关注如何把可用模型组件组织成边界清晰、证据完整、能够定位问题来源的系统化研究流程。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 国内外研究现状对比",
+            "headers": ["方向", "国外研究重点", "国内研究与应用重点"],
+            "rows": [
+                ["文本到音乐生成", "大规模基础模型、长时一致性、文本和旋律条件控制", "本地部署、提示词工程、垂直风格适配和网页化生成"],
+                ["参数高效微调", "LoRA、Adapter 等低成本适配方法及多任务泛化", "面向消费级 GPU 的小样本训练、权重管理和同 seed 对照"],
+                ["歌声音色迁移", "内容、F0、音色嵌入和声码器的解耦建模", "授权样本管理、中文交互、伴奏重混和听感修复"],
+                ["实验评价", "FAD、CLAP 相似度、主观听评和公开 benchmark", "任务级证据归档、可复现报告、生成内容标识和工程可用性"],
+            ],
+            "docx_widths": [1900, 3700, 3760],
+            "font_size": 8.6,
+        },
+        {"type": "h2", "text": "2.3 关键问题与本文定位"},
+        {
+            "type": "p",
+            "text": (
+                "现有研究虽然已经证明大模型可以生成音乐、分离音轨并转换音色，但在一个真实系统中仍存在三类关键问题：一是风格适配与旋律结构学习容易混淆，短片段训练可能只学到瞬时音色或局部纹理，而难以学习段落级铺垫和 drop 结构；"
+                "二是歌声音色迁移对分轨质量高度敏感，伴奏泄漏会污染内容编码和声码器输出；三是听感问题往往缺乏中间证据，无法判断问题来自数据、模型、采样参数还是后处理。"
+                "本文的定位不是重新提出一个完整基础模型，而是在现有基础模型和开源组件上构建可解释、可复核、可迭代的智能音频处理方法。"
+            ),
+        },
+    ]
+    blocks[related_idx + 1:related_idx + 1] = related_insert
+
+    method_idx = next(
+        i for i, block in enumerate(blocks) if block.get("type") == "h1" and str(block.get("text", "")).startswith("3 ")
+    )
+    method_insert = [
+        {"type": "h2", "text": "3.1 总体技术路线"},
+        {
+            "type": "p",
+            "text": (
+                "本文技术路线按照“数据层、模型层、推理层、评价层”组织。"
+                "数据层负责把原始音频切分为基础风格片段和段落级结构片段，并记录来源、时长、标签和训练划分；模型层将 ACE-Step+LoRA 的生成式适配与 Demucs+Seed-VC 的授权音色迁移分离部署；"
+                "推理层通过固定 seed、采样步数、guidance、LoRA 权重和后处理参数控制变量；评价层保存客观声学指标、主观听评入口、波形频谱诊断图和 Mel 水印证据。"
+                "这种分层设计使系统在听感不理想时能够逐层回查，而不是把所有问题笼统归因于“模型不像”。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 技术路线与可观测证据",
+            "headers": ["层次", "核心操作", "可观测证据"],
+            "rows": [
+                ["数据层", "8 秒基础片段、15 秒段落片段、结构标签和训练划分", "数据统计、标签分布、split 文件和样本路径"],
+                ["生成模型层", "冻结 ACE-Step 主体并注入 LoRA 低秩残差", "LoRA manifest、训练步数、可训练参数和同 seed 输出"],
+                ["音色迁移层", "Demucs 分轨、Seed-VC 转换、去沙哑、包络保持和重混", "stems、converted vocals、mix wav、参数 JSON 和运行日志"],
+                ["评价层", "BPM、RMS、低频比例、onset、RTF、波形频谱和 Mel 水印", "指标表、诊断图、网页任务记录和最终报告图表"],
+            ],
+            "docx_widths": [1700, 4200, 3460],
+            "font_size": 8.5,
+        },
+    ]
+    blocks[method_idx + 1:method_idx + 1] = method_insert
+    for block in blocks[method_idx + 1 + len(method_insert):]:
+        if block.get("type") == "h1" and str(block.get("text", "")).startswith("4 "):
+            break
+        if block.get("type") == "h2":
+            text = str(block.get("text", ""))
+            if text.startswith("3.1 "):
+                block["text"] = text.replace("3.1 ", "3.2 ", 1)
+            elif text.startswith("3.2 "):
+                block["text"] = text.replace("3.2 ", "3.3 ", 1)
+            elif text.startswith("3.3 "):
+                block["text"] = text.replace("3.3 ", "3.4 ", 1)
+
+    exp_idx = next(
+        i for i, block in enumerate(blocks) if block.get("type") == "h1" and str(block.get("text", "")).startswith("4 ")
+    )
+    exp_insert = [
+        {"type": "h2", "text": "4.1 数据集构建与切分原则"},
+        {
+            "type": "p",
+            "text": (
+                "本文使用两级训练数据，而不是单一数据集。"
+                f"第一层为 {total} 条 8 秒基础 EDM 片段，主要用于让 LoRA 学习目标数据域的音色纹理、节奏密度、低频能量和短时制作特征，训练/验证/测试划分为 {train}/{val}/{test}。"
+                f"第二层为 {section15_clips} 条 15 秒段落级增强片段，来自 {section15_sources} 个来源，主要用于强化 intro、breakdown、build-up、drop 等段落结构。"
+                "因此，论文中出现的 6000 余条 clip 与 300 余条段落样本并不矛盾：前者是基础微调样本规模，后者是面向段落结构的二次增强样本规模。"
+            ),
+        },
+        {
+            "type": "table",
+            "caption": "表 数据层级与训练目的",
+            "headers": ["数据层级", "规模与切分", "训练目的"],
+            "rows": [
+                ["基础 8 秒片段", f"{total} 条；train/val/test={train}/{val}/{test}", "学习短时音色、鼓组、低频、混音质感和目标域局部纹理"],
+                ["段落 15 秒片段", f"{section15_clips} 条；{section15_summary}", "补充段落推进、drop 进入、build-up 铺垫和结构标签条件"],
+                ["授权音色样例", "匿名样例 E-VC-01；任务级记录", "验证源人声内容、目标音色、分轨伴奏和重混链路是否可复核"],
+            ],
+            "docx_widths": [1900, 3600, 3860],
+            "font_size": 8.5,
+        },
+    ]
+    blocks[exp_idx + 1:exp_idx + 1] = exp_insert
+
+    blocks[-1]["items"] = [
+        "Ho J, Jain A, Abbeel P. Denoising Diffusion Probabilistic Models[C]//Advances in Neural Information Processing Systems. 2020.",
+        "Rombach R, Blattmann A, Lorenz D, Esser P, Ommer B. High-Resolution Image Synthesis with Latent Diffusion Models[C]//Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition. 2022.",
+        "Agostinelli A, Denk T I, Borsos Z, et al. MusicLM: Generating Music From Text[J/OL]. arXiv:2301.11325, 2023.",
+        "Copet J, Kreuk F, Gat I, et al. Simple and Controllable Music Generation[C]//Advances in Neural Information Processing Systems. 2023.",
+        "Liu H, Chen Z, Yuan Y, et al. AudioLDM: Text-to-Audio Generation with Latent Diffusion Models[C]//International Conference on Machine Learning. 2023.",
+        "Liu H, Tian Q, Yuan Y, et al. AudioLDM 2: Learning Holistic Audio Generation with Self-supervised Pretraining[C]//International Conference on Learning Representations. 2024.",
+        "Gong J, Zhao W, Wang S, Xu S, Guo J. ACE-Step: A Step Towards Music Generation Foundation Model[J/OL]. arXiv:2506.00045, 2025.",
+        "Hu E J, Shen Y, Wallis P, et al. LoRA: Low-Rank Adaptation of Large Language Models[C]//International Conference on Learning Representations. 2022.",
+        "Défossez A, Synnaeve G, Adi Y. Hybrid Spectrogram and Waveform Source Separation[C]//ISMIR Workshop, 2021.",
+        "Qian K, Zhang Y, Chang S, Yang X, Hasegawa-Johnson M. AutoVC: Zero-Shot Voice Style Transfer with Only Autoencoder Loss[C]//International Conference on Machine Learning. 2019.",
+        "Plachtaa. Seed-VC: zero-shot voice and singing voice conversion toolkit[EB/OL]. GitHub repository.",
+        "Lee S, Ping W, Ginsburg B, Catanzaro B, Yoon S. BigVGAN: A Universal Neural Vocoder with Large-Scale Training[C]//International Conference on Learning Representations. 2023.",
+        "Li Y, Yuan R, Zhang G, et al. MERT: Acoustic Music Understanding Model with Large-Scale Self-supervised Training[J/OL]. arXiv:2306.00107, 2023.",
+        "McFee B, Raffel C, Liang D, et al. librosa: Audio and Music Signal Analysis in Python[C]//Proceedings of the 14th Python in Science Conference. 2015.",
+        "Kilgour K, Zuluaga M, Roblek D, Sharifi M. Fréchet Audio Distance: A Reference-Free Metric for Evaluating Music Enhancement Algorithms[C]//Interspeech. 2019.",
+    ]
+
+    return blocks
+
+
 def main() -> None:
     ensure_dirs()
     ctx = load_context()
     figs = make_figures(ctx)
-    blocks = normalize_caption_numbers(paper_blocks_submission_final(ctx, figs))
+    blocks = normalize_caption_numbers(paper_blocks_academic_revision(ctx, figs))
     write_tex(blocks)
     write_docx(blocks)
     write_html(blocks)
